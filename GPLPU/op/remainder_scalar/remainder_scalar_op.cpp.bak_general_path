@@ -1,0 +1,437 @@
+#include "remainder_scalar_op.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+#include <iostream>
+#include <set>
+#include <stdexcept>
+
+#include "../../iq/iq_id_defs.h"
+#include "../div_scalar/ur_code_extractor.h"
+
+namespace aiacc {
+namespace op {
+
+namespace {
+
+constexpr uint8_t RTOVR_IN_DR_INTADD_D0 = 0;
+constexpr uint8_t RTOVR_IN_DR_LOGIC_D = 10;
+constexpr uint8_t RTOVR_IN_UR_RDATA_0 = 30;
+constexpr uint8_t RTOVR_IN_UR_RDATA_1 = 31;
+constexpr uint8_t RTOVR_IN_UR_RDATA_2 = 32;
+
+constexpr uint8_t RTOVR_OUT_DVR_INTADD_S0 = 0;
+constexpr uint8_t RTOVR_OUT_DVR_INTADD_S1 = 1;
+constexpr uint8_t RTOVR_OUT_DVR_LOGIC_S0 = 11;
+constexpr uint8_t RTOVR_OUT_DVR_LOGIC_S1 = 12;
+constexpr uint8_t RTOVR_OUT_UVR_WDATA_0 = 35;
+
+constexpr uint32_t kBitsEmbed = 3;
+constexpr uint32_t kBitsEmbedEnd = 6;
+constexpr uint32_t kBitsLoops = 10;
+constexpr uint32_t kBitsCond = 7;
+constexpr uint32_t kBitsDly = 3;
+constexpr uint32_t kBitsInc = 4;
+constexpr uint32_t kBitsIncEmbed = 6;
+constexpr uint32_t kMaskEmbed = (1u << kBitsEmbed) - 1;
+constexpr uint32_t kMaskEmbedEnd = (1u << kBitsEmbedEnd) - 1;
+constexpr uint32_t kMaskLoops = (1u << kBitsLoops) - 1;
+constexpr uint32_t kMaskCond = (1u << kBitsCond) - 1;
+constexpr uint32_t kMaskDly = (1u << kBitsDly) - 1;
+constexpr uint32_t kMaskInc = (1u << kBitsInc) - 1;
+constexpr uint32_t kMaskIncEmbed = (1u << kBitsIncEmbed) - 1;
+
+RemainderScalarDataType to_dtype(app::AppDataType dtype) {
+    if (dtype != app::AppDataType::INT32) {
+        throw std::runtime_error("RemainderScalar only supports INT32 input/output");
+    }
+    return RemainderScalarDataType::INT32;
+}
+
+int32_t get_i32_param(const app::AppOperatorRequest& req, const std::string& key, int32_t def) {
+    auto it = req.para_parameters.find(key);
+    if (it != req.para_parameters.end() && !it->second.para_data_i32.empty()) {
+        return it->second.para_data_i32[0];
+    }
+    return def;
+}
+
+int32_t get_scalar(const app::AppOperatorRequest& req) {
+    for (const char* key : {"other_scalar", "scalar", "scalar_value"}) {
+        auto pit = req.para_parameters.find(key);
+        if (pit != req.para_parameters.end() && !pit->second.para_data_i32.empty()) {
+            return pit->second.para_data_i32[0];
+        }
+        auto iit = req.para_inputs.find(key);
+        if (iit != req.para_inputs.end() && !iit->second.para_data_i32.empty()) {
+            return iit->second.para_data_i32[0];
+        }
+    }
+    auto it = req.para_inputs.find("other_tensor");
+    if (it != req.para_inputs.end() && !it->second.para_data_i32.empty()) return it->second.para_data_i32[0];
+    return 16;
+}
+
+bool is_positive_power_of_two(int32_t v) {
+    return v > 0 && (v & (v - 1)) == 0;
+}
+
+void push_u32(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(static_cast<uint8_t>(v & 0xFF));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+}
+
+uint64_t serialize_header_bits(uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops,
+                               uint8_t cond, uint8_t dly, int8_t inc,
+                               uint8_t embed_end_bits, uint8_t inc_embed_bits) {
+    uint64_t bits = 0;
+    uint32_t pos = 0;
+    const uint8_t embed_end = (embed == 0) ? (embed_end_bits & kMaskEmbedEnd) : 0u;
+    const uint8_t inc_embed = (embed == 0) ? (inc_embed_bits & kMaskIncEmbed) : 0u;
+    bits |= static_cast<uint64_t>(inc_embed & kMaskIncEmbed) << pos; pos += kBitsIncEmbed;
+    bits |= static_cast<uint64_t>(static_cast<uint8_t>(inc) & kMaskInc) << pos; pos += kBitsInc;
+    bits |= static_cast<uint64_t>(dly & kMaskDly) << pos; pos += kBitsDly;
+    bits |= static_cast<uint64_t>(cond & kMaskCond) << pos; pos += kBitsCond;
+    bits |= static_cast<uint64_t>(loops & kMaskLoops) << pos; pos += kBitsLoops;
+    bits |= static_cast<uint64_t>(embed_end & kMaskEmbedEnd) << pos; pos += kBitsEmbedEnd;
+    bits |= static_cast<uint64_t>(embed & kMaskEmbed) << pos; pos += kBitsEmbed;
+    bits |= static_cast<uint64_t>(jump & 1u) << pos; pos += 1;
+    bits |= static_cast<uint64_t>(vld & 1u) << pos;
+    return bits;
+}
+
+std::vector<uint8_t> serialize_code(uint64_t code, uint16_t code_bits) {
+    std::vector<uint8_t> bytes;
+    const uint16_t num_bytes = (code_bits + 7) / 8;
+    for (int i = num_bytes - 1; i >= 0; --i) {
+        bytes.push_back(static_cast<uint8_t>((code >> (i * 8)) & 0xFF));
+    }
+    return bytes;
+}
+
+std::vector<uint8_t> make_inst(uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops,
+                               uint8_t cond, uint8_t dly, int8_t inc,
+                               uint8_t embed_end_bits, uint8_t inc_embed_bits,
+                               const std::vector<uint8_t>& code_bytes,
+                               int code_bits) {
+    const uint64_t h = serialize_header_bits(vld, jump, embed, loops, cond, dly, inc,
+                                             embed_end_bits, inc_embed_bits);
+    uint64_t c = 0;
+    for (uint8_t b : code_bytes) c = (c << 8) | b;
+    if (code_bits < 64) c &= ((1ULL << code_bits) - 1ULL);
+    const uint64_t total = (h << code_bits) | c;
+    const int total_width = 41 + code_bits;
+    const int num_bytes = (total_width + 7) / 8;
+    std::vector<uint8_t> ret;
+    for (int i = num_bytes - 1; i >= 0; --i) {
+        ret.push_back(static_cast<uint8_t>((total >> (i * 8)) & 0xFF));
+    }
+    return ret;
+}
+
+std::vector<uint8_t> make_ur_w_inst(uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops,
+                                    uint8_t cond, uint8_t dly, uint8_t inc,
+                                    uint8_t embed_end_bits, uint8_t inc_embed_bits,
+                                    uint64_t code, uint16_t code_bits) {
+    const uint64_t header = serialize_header_bits(vld, jump, embed, loops, cond, dly, inc,
+                                                  embed_end_bits, inc_embed_bits);
+    const uint64_t mask = (code_bits >= 64) ? ~0ULL : ((1ULL << code_bits) - 1ULL);
+    const unsigned __int128 inst =
+        (static_cast<unsigned __int128>(header) << code_bits) |
+        static_cast<unsigned __int128>(code & mask);
+    std::vector<uint8_t> bytes;
+    const int total_width = 41 + code_bits;
+    const int num_bytes = (total_width + 7) / 8;
+    for (int i = num_bytes - 1; i >= 0; --i) {
+        bytes.push_back(static_cast<uint8_t>((inst >> (i * 8)) & 0xFF));
+    }
+    return bytes;
+}
+
+void gen_ur_read(const RemainderScalarParams& p, iq::UrCru& cru) {
+    cru.para_vld = true;
+    cru.para_raddr[0].bank = p.para_input_bank;
+    cru.para_raddr[0].addr_word = p.para_input_addr;
+    cru.para_re[0] = true;
+    cru.para_raddr[1].bank = p.para_scalar_bank;
+    cru.para_raddr[1].addr_word = p.para_scalar_addr;
+    cru.para_re[1] = true;
+    cru.para_raddr[2].bank = p.para_one_bank;
+    cru.para_raddr[2].addr_word = p.para_one_addr;
+    cru.para_re[2] = true;
+    cru.para_re[3] = false;
+    for (int i = 0; i < 4; ++i) cru.para_we[i] = false;
+}
+
+void gen_ur_write(const RemainderScalarParams& p, iq::UrCru& cru) {
+    cru.para_vld = true;
+    for (int i = 0; i < 4; ++i) cru.para_re[i] = false;
+    cru.para_waddr[0].bank = p.para_output_bank;
+    cru.para_waddr[0].addr_word = p.para_output_addr;
+    cru.para_we[0] = true;
+    cru.para_wbe[0] = 0xFFFF;
+    cru.para_we[1] = cru.para_we[2] = cru.para_we[3] = false;
+}
+
+} // namespace
+
+std::string RemainderScalarOp::get_name() const {
+    return "RemainderScalar";
+}
+
+OpInstructionsBase* RemainderScalarOp::compile(const app::AppOperatorRequest& req) {
+    if (req.para_layout_mode == "bank_conflict") {
+        throw std::runtime_error("RemainderScalar only supports default layout for now");
+    }
+
+    RemainderScalarParams p;
+    p.para_n = req.para_dimensions.para_n;
+    p.para_c = req.para_dimensions.para_c;
+    p.para_h = req.para_dimensions.para_h;
+    p.para_w = req.para_dimensions.para_w;
+
+    auto input_it = req.para_inputs.find("input_tensor");
+    if (input_it == req.para_inputs.end()) input_it = req.para_inputs.find("input");
+    if (input_it != req.para_inputs.end()) p.para_dtype = to_dtype(input_it->second.para_dtype);
+
+    p.para_input_bank = static_cast<uint8_t>(get_i32_param(req, "input_bank", 0));
+    p.para_input_addr = static_cast<uint8_t>(get_i32_param(req, "input_addr", 0));
+    p.para_scalar_bank = static_cast<uint8_t>(get_i32_param(req, "other_bank", 1));
+    p.para_scalar_addr = static_cast<uint8_t>(get_i32_param(req, "other_addr", 0));
+    p.para_one_bank = static_cast<uint8_t>(get_i32_param(req, "alpha_bank", 3));
+    p.para_one_addr = static_cast<uint8_t>(get_i32_param(req, "alpha_addr", 0));
+    p.para_output_bank = static_cast<uint8_t>(get_i32_param(req, "output_bank", 2));
+    p.para_output_addr = static_cast<uint8_t>(get_i32_param(req, "output_addr", 0));
+    p.para_scalar_value = get_scalar(req);
+    p.para_smc_id_en = static_cast<uint8_t>(get_i32_param(req, "smc_id_en", 7));
+
+    if (!is_positive_power_of_two(p.para_scalar_value)) {
+        throw std::runtime_error("RemainderScalar LOGIC path currently supports positive power-of-two scalar only");
+    }
+
+    std::set<uint8_t> banks{p.para_input_bank, p.para_scalar_bank, p.para_one_bank, p.para_output_bank};
+    if (banks.size() != 4) {
+        throw std::runtime_error("RemainderScalar requires distinct input/scalar/one/output banks");
+    }
+
+    RemainderScalarInstructions* insts = new RemainderScalarInstructions();
+    *insts = compile(p);
+    return insts;
+}
+
+RemainderScalarInstructions RemainderScalarOp::compile(const RemainderScalarParams& p) {
+    RemainderScalarInstructions r;
+    r.para_dtype = p.para_dtype;
+    r.para_smc_id_en = p.para_smc_id_en;
+    const uint32_t total_elems = p.para_n * p.para_c * p.para_h * p.para_w;
+    const uint32_t total_steps = (total_elems + p.get_elems_per_word() - 1) / p.get_elems_per_word();
+    if (total_steps == 0) throw std::runtime_error("RemainderScalar: total_steps is zero");
+    r.para_total_steps = total_steps;
+    r.para_total_elements = total_elems;
+    r.para_total_cycles = 8 + (total_steps - 1) * 4;
+
+    iq::UrCru ur_r, ur_w;
+    gen_ur_read(p, ur_r);
+    gen_ur_write(p, ur_w);
+    r.para_ur_read_crus.push_back(ur_r);
+    r.para_ur_write_crus.push_back(ur_w);
+
+    r.para_rtovr_routes.push_back({RTOVR_OUT_DVR_INTADD_S0, RTOVR_IN_UR_RDATA_1});
+    r.para_rtovr_routes.push_back({RTOVR_OUT_DVR_INTADD_S1, RTOVR_IN_UR_RDATA_2});
+    r.para_rtovr_routes.push_back({RTOVR_OUT_DVR_LOGIC_S0, RTOVR_IN_UR_RDATA_0});
+    r.para_rtovr_routes.push_back({RTOVR_OUT_DVR_LOGIC_S1, RTOVR_IN_DR_INTADD_D0});
+    r.para_rtovr_routes.push_back({RTOVR_OUT_UVR_WDATA_0, RTOVR_IN_DR_LOGIC_D});
+
+    iq::IntAddCru add{};
+    add.para_inst_valid = true;
+    add.para_precision_s0 = 3;
+    add.para_precision_s1 = 3;
+    add.para_precision_s2 = 3;
+    add.para_sign_s0 = false;
+    add.para_sign_s1 = false;
+    add.para_sign_s2 = false;
+    add.para_sign_d = false;
+    add.para_update_st = false;
+    add.para_is_sub = true;
+    r.para_intadd_inst = iq::IntAddIq::pack_cru_intadd(add);
+
+    iq::LogicalCru logic{};
+    logic.para_inst_valid = true;
+    logic.para_precision_32b = true;
+    logic.para_opcode = iq::LogicalOp::AND;
+    r.para_logic_inst = iq::LogicalIq::pack_cru_logical(logic);
+
+    std::cout << "[RemainderScalar] Bank config:\n"
+              << "  Input:  bank=" << static_cast<int>(p.para_input_bank) << ", addr=" << static_cast<int>(p.para_input_addr) << "\n"
+              << "  Scalar: bank=" << static_cast<int>(p.para_scalar_bank) << ", addr=" << static_cast<int>(p.para_scalar_addr) << " (raw scalar)\n"
+              << "  One:    bank=" << static_cast<int>(p.para_one_bank) << ", addr=" << static_cast<int>(p.para_one_addr) << " (constant 1)\n"
+              << "  Output: bank=" << static_cast<int>(p.para_output_bank) << ", addr=" << static_cast<int>(p.para_output_addr) << "\n"
+              << "  Path:   INTADD scalar-1 -> LOGIC AND, smc_id_en=" << static_cast<int>(p.para_smc_id_en) << "\n";
+    return r;
+}
+
+std::vector<IqInstructionFile> RemainderScalarInstructions::get_iq_files() const {
+    std::vector<IqInstructionFile> files;
+    const uint16_t loops = para_total_steps >= 1 ? static_cast<uint16_t>(para_total_steps - 1) : 0;
+    const uint8_t smc = para_smc_id_en & 0x1F;
+
+    auto append_ur_r = [&](uint32_t iq_id, const char* name, uint32_t code, uint8_t inc) {
+        IqInstructionFile f;
+        f.para_iq_id = iq_id;
+        f.para_iq_name = name;
+        f.para_width_bits = 41 + 17;
+        const uint64_t full_code = static_cast<uint64_t>(code) | (static_cast<uint64_t>(smc) << 12);
+        auto inst = make_inst(1, 0, 0, loops, 0, 0, inc, 0, 0, serialize_code(full_code, 17), 17);
+        f.para_data.insert(f.para_data.end(), inst.begin(), inst.end());
+        files.push_back(f);
+    };
+
+    append_ur_r(iq::IQ_ID_UR_RDATA_0, iq::IQ_NAME_UR_RDATA_0, extract_ur_read_port0_code(para_ur_read_crus[0]), 1);
+    append_ur_r(iq::IQ_ID_UR_RDATA_1, iq::IQ_NAME_UR_RDATA_1, extract_ur_read_port1_code(para_ur_read_crus[0]), 0);
+    append_ur_r(iq::IQ_ID_UR_RDATA_2, iq::IQ_NAME_UR_RDATA_2, extract_ur_read_port2_code(para_ur_read_crus[0]), 0);
+
+    for (const auto& route : para_rtovr_routes) {
+        IqInstructionFile f;
+        f.para_iq_id = iq::IQ_ID_RTOVR_BASE + route.first;
+        f.para_iq_name = "rtovr-" + std::to_string(route.first);
+        f.para_width_bits = 41 + 7;
+        const uint8_t route_code = static_cast<uint8_t>((route.second << 1) | 1u);
+        uint8_t dly = 1;
+        if (route.first == RTOVR_OUT_DVR_LOGIC_S1) dly = 4;
+        if (route.first == RTOVR_OUT_UVR_WDATA_0) dly = 6;
+        auto inst = make_inst(1, 0, 0, loops, 0, dly, 0, 0, 0, serialize_code(route_code, 7), 7);
+        f.para_data.insert(f.para_data.end(), inst.begin(), inst.end());
+        files.push_back(f);
+    }
+
+    {
+        IqInstructionFile f;
+        f.para_iq_id = iq::IQ_ID_INTADD;
+        f.para_iq_name = iq::IQ_NAME_INTADD;
+        f.para_width_bits = 41 + 13;
+        auto inst = make_inst(1, 0, 0, loops, 0, 2, 0, 0, 0, serialize_code(para_intadd_inst, 13), 13);
+        f.para_data.insert(f.para_data.end(), inst.begin(), inst.end());
+        files.push_back(f);
+    }
+
+    {
+        IqInstructionFile f;
+        f.para_iq_id = iq::IQ_ID_LOGIC;
+        f.para_iq_name = iq::IQ_NAME_LOGIC;
+        f.para_width_bits = 41 + 11;
+        const uint64_t code = (static_cast<uint64_t>(smc) << 6) | (para_logic_inst & 0x3F);
+        auto inst = make_inst(1, 0, 0, loops, 0, 5, 0, 0, 0, serialize_code(code, 11), 11);
+        f.para_data.insert(f.para_data.end(), inst.begin(), inst.end());
+        files.push_back(f);
+    }
+
+    {
+        IqInstructionFile f;
+        f.para_iq_id = iq::IQ_ID_UR_WDATA_0;
+        f.para_iq_name = iq::IQ_NAME_UR_WDATA_0;
+        f.para_width_bits = 41 + 33;
+        const uint64_t code = static_cast<uint64_t>(extract_ur_write_port0_code(para_ur_write_crus[0])) |
+                              (static_cast<uint64_t>(smc) << 28);
+        auto inst = make_ur_w_inst(1, 0, 0, loops, 0, 7, 1, 0, 0, code, 33);
+        f.para_data.insert(f.para_data.end(), inst.begin(), inst.end());
+        files.push_back(f);
+    }
+    return files;
+}
+
+bool RemainderScalarOp::calculate_golden(const app::AppOperatorRequest& req,
+                                         std::vector<uint8_t>& golden_bin) {
+    golden_bin.clear();
+    auto it = req.para_inputs.find("input_tensor");
+    if (it == req.para_inputs.end()) it = req.para_inputs.find("input");
+    if (it == req.para_inputs.end() || it->second.para_dtype != app::AppDataType::INT32) return false;
+    const int32_t scalar = get_scalar(req);
+    if (!is_positive_power_of_two(scalar)) return false;
+    const uint32_t mask = static_cast<uint32_t>(scalar - 1);
+    for (int32_t x : it->second.para_data_i32) {
+        push_u32(golden_bin, static_cast<uint32_t>(x) & mask);
+    }
+    return true;
+}
+
+bool RemainderScalarOp::generate_data(const app::AppOperatorRequest& req,
+                                      std::vector<uint8_t>& input_bin,
+                                      std::vector<uint8_t>& other_bin,
+                                      std::vector<uint8_t>& alpha_bin) {
+    input_bin.clear();
+    other_bin.clear();
+    alpha_bin.clear();
+    auto it = req.para_inputs.find("input_tensor");
+    if (it == req.para_inputs.end()) it = req.para_inputs.find("input");
+    if (it == req.para_inputs.end() || it->second.para_dtype != app::AppDataType::INT32) return false;
+    const int32_t scalar = get_scalar(req);
+    if (!is_positive_power_of_two(scalar)) return false;
+    for (int32_t x : it->second.para_data_i32) push_u32(input_bin, static_cast<uint32_t>(x));
+    for (int lane = 0; lane < 4; ++lane) push_u32(other_bin, static_cast<uint32_t>(scalar));
+    for (int lane = 0; lane < 4; ++lane) push_u32(alpha_bin, 1u);
+    return true;
+}
+
+void RemainderScalarOp::fill_random_request(app::AppOperatorRequest& req,
+                                            std::mt19937& rng,
+                                            std::uniform_real_distribution<float>& data_dist,
+                                            const std::string& dtype_str) {
+    (void)dtype_str;
+    req.para_operator = "RemainderScalar";
+    if (req.para_layout_mode == "bank_conflict") req.para_layout_mode = "default";
+    const uint32_t total = req.para_dimensions.para_n * req.para_dimensions.para_c *
+                           req.para_dimensions.para_h * req.para_dimensions.para_w;
+    app::AppTensorDesc input;
+    input.para_name = "input_tensor";
+    input.para_dtype = app::AppDataType::INT32;
+    input.para_shape = {req.para_dimensions.para_n, req.para_dimensions.para_c,
+                        req.para_dimensions.para_h, req.para_dimensions.para_w};
+    input.para_data_i32.reserve(total);
+    for (uint32_t i = 0; i < total; ++i) {
+        input.para_data_i32.push_back(static_cast<int32_t>(std::round(data_dist(rng) * 64.0f)));
+    }
+    req.para_inputs["input_tensor"] = input;
+
+    app::AppTensorDesc scalar;
+    scalar.para_name = "other_scalar";
+    scalar.para_dtype = app::AppDataType::INT32;
+    scalar.para_shape = {1};
+    scalar.para_data_i32.push_back(16);
+    req.para_parameters["other_scalar"] = scalar;
+
+    auto set_i32 = [&](const std::string& name, int v) {
+        app::AppTensorDesc d;
+        d.para_name = name;
+        d.para_dtype = app::AppDataType::INT32;
+        d.para_shape = {1};
+        d.para_data_i32.push_back(v);
+        req.para_parameters[name] = d;
+    };
+    set_i32("input_bank", 0);
+    set_i32("input_addr", 0);
+    set_i32("other_bank", 1);
+    set_i32("other_addr", 0);
+    set_i32("alpha_bank", 3);
+    set_i32("alpha_addr", 0);
+    set_i32("output_bank", 2);
+    set_i32("output_addr", 0);
+}
+
+std::vector<uint8_t> RemainderScalarInstructions::serialize() const {
+    std::vector<uint8_t> out;
+    push_u32(out, para_total_steps);
+    push_u32(out, para_total_elements);
+    push_u32(out, para_total_cycles);
+    out.push_back(static_cast<uint8_t>(para_intadd_inst & 0xFF));
+    out.push_back(static_cast<uint8_t>((para_intadd_inst >> 8) & 0xFF));
+    out.push_back(para_logic_inst);
+    return out;
+}
+
+REGISTER_OP(RemainderScalarOp);
+
+} // namespace op
+} // namespace aiacc

@@ -1,0 +1,35 @@
+{
+    "version": "0.2.0",
+    "inputs": [],
+    "configurations": [
+        {
+            "name": "GDB using OpenOCD",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/hello_world.elf",
+            "stopAtEntry": false,
+            "stopAtConnect": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            // upload task in tasks.json should upload program into target RAM
+            // (have not been able to do it here, at least not with OpenOCD GDB pipe)
+            "preLaunchTask": "upload",
+
+            "setupCommands": [
+                { "text": "-enable-pretty-printing" },
+                { "text": "skip -gfile libgcc2.c", "description": "skip over GCC built-in functions (no source available)" },
+                //{ "text": "skip -function timer_handler", "description": "skip over GCC built-in functions (no source available)" },
+                //{ "text": "skip -function delay_loop_ibex", "description": "skip over GCC built-in functions (no source available)" },
+            ],
+            "MIMode": "gdb",
+            "miDebuggerPath": "${workspaceFolder}/local/riscv64-unknown-elf-gcc-20171231-x86_64-linux-centos6/bin/riscv64-unknown-elf-gdb",
+            // --- !!! --- CHANGE HOST IP TO THAT OF HOST WITH CORUNDUM PCIe AND RUNNING OPENOCD GDB SERVER --- !!! ---
+            "miDebuggerServerAddress": "192.168.1.50:3333",
+            "hardwareBreakpoints": {
+                "require": false,
+                "limit": 3
+            }
+        }
+    ]
+}

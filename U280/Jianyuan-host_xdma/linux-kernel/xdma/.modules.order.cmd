@@ -1,0 +1,1 @@
+cmd_/home/xuedong/au280/qdma_drivers/XDMA/linux-kernel/xdma/modules.order := {   echo /home/xuedong/au280/qdma_drivers/XDMA/linux-kernel/xdma/xdma.ko; :; } | awk '!x[$$0]++' - > /home/xuedong/au280/qdma_drivers/XDMA/linux-kernel/xdma/modules.order

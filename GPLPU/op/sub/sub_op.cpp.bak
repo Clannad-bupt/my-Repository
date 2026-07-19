@@ -1,0 +1,1056 @@
+/**
+ * @file sub_op.cpp
+ * @brief Add 绠楀瓙鏍稿績瀹炵幇
+ * 鍔熻兘锛歰ut = input + alpha * other
+ */
+#include "sub_op.h"
+#include <iostream>
+#include <iomanip>
+#include <cstring>
+#include <algorithm>
+#include <stdexcept>
+#include <type_traits>
+#include "../../iq/iq_id_defs.h"
+#include "../../app/fp16_utils.h"
+#include "ur_code_extractor.h"
+
+// 妯″潡鍖栧ご鏂囦欢
+#include "sub_op_constants.h"
+#include "sub_op_bank_conflict.h"
+#include "sub_op_ur_inst.h"
+#include "sub_op_rtovr_inst.h"
+#include "sub_op_compute_inst.h"
+
+namespace aiacc {
+namespace op {
+
+/**
+ * @brief Internal constants/helpers for instruction packing.
+ *
+ * Centralizing these values makes the bit/delay logic easier to audit.
+ */
+namespace {
+constexpr uint8_t kMaxDlyField = 7;  ///< 3-bit DLY field max value
+constexpr uint32_t kRtovrPorts = 40;
+constexpr uint32_t kRtovrBitsPerPort = 7;
+constexpr uint32_t kRtovrTotalBits = kRtovrPorts * kRtovrBitsPerPort;  // 280
+constexpr uint32_t kRtovrMsbBitIndex = kRtovrTotalBits - 1;            // 279
+
+template <typename EmitDummyFn>
+uint8_t emit_dummy_for_long_delay(uint32_t& total_dly, EmitDummyFn&& emit_dummy) {
+    while (total_dly > kMaxDlyField) {
+        emit_dummy();
+        total_dly -= 8;  // delay(7) + execute(1)
+    }
+    return static_cast<uint8_t>(total_dly);
+}
+
+/**
+ * @brief Extract 7-bit RtoVR port code from packed words.
+ */
+uint8_t extract_rtovr_port_code(const std::vector<uint32_t>& rtovr_words, uint8_t port) {
+    if (rtovr_words.empty() || port >= kRtovrPorts) return 0;
+
+    const uint32_t bit_lsb = 273u - static_cast<uint32_t>(port) * kRtovrBitsPerPort;
+    const uint32_t word_idx = bit_lsb / 32u;
+    const uint32_t bit_in_word = bit_lsb % 32u;
+    if (word_idx >= rtovr_words.size()) return 0;
+
+    uint32_t code = (rtovr_words[word_idx] >> bit_in_word) & 0x7Fu;
+    if (bit_in_word > 25u && (word_idx + 1u) < rtovr_words.size()) {
+        const uint32_t right_bits = 32u - bit_in_word;
+        const uint32_t high_mask = (1u << (kRtovrBitsPerPort - right_bits)) - 1u;
+        const uint32_t high_bits = rtovr_words[word_idx + 1u] & high_mask;
+        code |= (high_bits << right_bits);
+    }
+    return static_cast<uint8_t>(code & 0x7Fu);
+}
+} // namespace
+
+// ============================================================================
+// 闈欐€佽緟鍔╁嚱鏁帮細鎸囦护鐢熸垚瀹炵幇
+// ============================================================================
+
+static void sub_gen_ur_insts_impl(const SubOpParams& params, SubOpInstructions& result) {
+    if (result.para_num_slots == 1) {
+        // 鏃犲啿绐侊細鍗?slot 妯″紡
+        iq::UrCru ur_read_cru;
+        sub_gen_ur_read_inst(params, 0, ur_read_cru);
+        result.para_ur_read_crus.push_back(ur_read_cru);
+        
+        iq::UrCru ur_write_cru;
+        sub_gen_ur_write_inst(params, 0, ur_write_cru);
+        result.para_ur_write_crus.push_back(ur_write_cru);
+    } else {
+        // 鏈夊啿绐侊細澶?slot 妯″紡
+        for (uint8_t slot_id = 0; slot_id < result.para_num_slots; ++slot_id) {
+            iq::UrCru ur_read_cru;
+            sub_gen_ur_read_inst_slot(params, 0, slot_id, result.para_slot_accesses[slot_id], ur_read_cru);
+            result.para_ur_read_crus.push_back(ur_read_cru);
+            
+            iq::UrCru ur_write_cru;
+            sub_gen_ur_write_inst_slot(params, 0, slot_id, result.para_slot_accesses[slot_id], ur_write_cru);
+            result.para_ur_write_crus.push_back(ur_write_cru);
+        }
+    }
+}
+
+static void gen_float_compute_impl(const SubOpParams& params, SubOpInstructions& result) {
+    // Stage1: alpha, other 鈫?FPMUL
+    {
+        iq::RtoVrCru rtovr_cru;
+        sub_gen_rtovr_to_fpmul(rtovr_cru);
+        uint32_t rtovr_words[10];
+        iq::RtoVrIq::pack_cru_rtovr_words(rtovr_cru, rtovr_words);
+        result.para_rtovr_stage1.assign(rtovr_words, rtovr_words + 9);
+    }
+    
+    // Stage2: input, fpmul_d 鈫?FPADD
+    {
+        iq::RtoVrCru rtovr_cru;
+        sub_gen_rtovr_to_fpadd(rtovr_cru);
+        uint32_t rtovr_words[10];
+        iq::RtoVrIq::pack_cru_rtovr_words(rtovr_cru, rtovr_words);
+        result.para_rtovr_stage2.assign(rtovr_words, rtovr_words + 9);
+    }
+    
+    // Stage3: fpadd_d 鈫?UVR_WDATA
+    {
+        iq::RtoVrCru rtovr_cru;
+        sub_gen_rtovr_fpadd_to_ur(rtovr_cru);
+        uint32_t rtovr_words[10];
+        iq::RtoVrIq::pack_cru_rtovr_words(rtovr_cru, rtovr_words);
+        result.para_rtovr_stage3.assign(rtovr_words, rtovr_words + 9);
+    }
+    
+    // 鐢熸垚 FPMUL 鍜?FPADD 鎸囦护
+    {
+        iq::FpMulCru fpmul_cru;
+        sub_gen_fpmul_inst(params, fpmul_cru);
+        result.para_fpmul_inst = iq::FpMulIq::pack_cru_fpmul(fpmul_cru);
+    }
+    {
+        iq::FpAddCru fpadd_cru;
+        sub_gen_fpadd_inst(params, fpadd_cru);
+        result.para_fpadd_inst = iq::FpAddIq::pack_cru_fpadd(fpadd_cru);
+    }
+}
+
+static void gen_int_compute_impl(const SubOpParams& params, SubOpInstructions& result) {
+    // Stage1: input, other, alpha 鈫?INTADD
+    {
+        iq::RtoVrCru rtovr_cru;
+        sub_gen_rtovr_to_intadd(rtovr_cru);
+        uint32_t rtovr_words[10];
+        iq::RtoVrIq::pack_cru_rtovr_words(rtovr_cru, rtovr_words);
+        result.para_rtovr_stage1.assign(rtovr_words, rtovr_words + 8);
+    }
+    
+    // Stage2: intadd_d 鈫?UVR_WDATA
+    {
+        iq::RtoVrCru rtovr_cru;
+        sub_gen_rtovr_intadd_to_ur(rtovr_cru);
+        uint32_t rtovr_words[10];
+        iq::RtoVrIq::pack_cru_rtovr_words(rtovr_cru, rtovr_words);
+        result.para_rtovr_stage2.assign(rtovr_words, rtovr_words + 8);
+    }
+    
+    // 鐢熸垚 INTADD 鎸囦护
+    {
+        iq::IntAddCru intadd_cru;
+        gen_intadd_inst(params, intadd_cru);
+        result.para_intadd_inst = iq::IntAddIq::pack_cru_intadd(intadd_cru);
+    }
+}
+
+SubOpInstructions SubOp::compile(const SubOpParams& para_params) {
+    SubOpInstructions result;
+    result.para_dtype = para_params.para_dtype;
+    
+    // ========================================================================
+    // 1. 瑙ｅ喅 Bank 鍐茬獊锛屽垎閰嶆椂闂存Ы锛坰lot锛?    // ========================================================================
+    result.para_num_slots = aiacc::op::sub_compute_slot_allocation(para_params, result.para_slot_accesses);
+    
+    // 2. 璁＄畻寰幆鍙傛暟
+    const uint32_t total_elems = para_params.para_n * para_params.para_c * 
+                                 para_params.para_h * para_params.para_w;
+    const uint32_t elems_per_word = para_params.get_elems_per_word();
+    const uint32_t total_steps = (total_elems + elems_per_word - 1) / elems_per_word;
+    
+    result.para_total_steps = total_steps;
+    result.para_total_elements = total_elems;
+    
+    // 宓屽寰幆锛氬灞?= N*C*H锛屽唴灞?= W
+    const uint32_t w_steps = para_params.para_w / elems_per_word;
+    const uint32_t outer_loops = para_params.para_n * para_params.para_c * para_params.para_h;
+    result.para_embed_loops = outer_loops;
+    result.para_inner_loops = w_steps;
+    
+    // 3. 鐢熸垚 UR 璇诲啓鎸囦护
+    sub_gen_ur_insts_impl(para_params, result);
+    
+    // 4. 鏍规嵁鏁版嵁绫诲瀷鐢熸垚璁＄畻鎸囦护
+    if (para_params.is_float_type()) {
+        gen_float_compute_impl(para_params, result);
+    } else {
+        gen_int_compute_impl(para_params, result);
+    }
+    
+    return result;
+}
+
+// ============================================================================
+// IQ 鏂囦欢搴忓垪鍖栵細灏嗗井鎸囦护鎵撳寘鎴愪簩杩涘埗鏂囦欢
+// ============================================================================
+// sub_gen_fpadd_inst / gen_intadd_inst 鍦?sub_op_compute_inst.cpp 涓疄鐜帮紙鑷敱鍑芥暟锛?
+// ==========================================
+// 杈呭姪鍑芥暟瀹炵幇
+// ==========================================
+
+// 杈呭姪鍑芥暟锛氫粠 RtoVR CRU 鎻愬彇瀹為檯浣跨敤鐨勭鍙ｅ垪琛?static std::vector<uint8_t> extract_active_rtovr_ports(const std::vector<uint32_t>& rtovr_words) {
+    std::vector<uint8_t> active_ports;
+    if (rtovr_words.empty()) return active_ports;
+    
+    // RtoVR CRU 鏍煎紡锛?0涓鍙ｏ紝姣忎釜绔彛 7 bits (1 valid + 6 select)
+    // 280 bits total锛屽瓨鍌ㄥ湪 rtovr_words[0..8] 涓?    // 娉ㄦ剰锛歱ack_cru_rtovr_words 浣跨敤閫嗗簭鍘嬪叆 (Group 0 鍦?Bit 279:273)
+    // 鎵€浠?port k 鐨?LSB 浣嶄簬 bit (279 - 7*k - 6) = (273 - 7*k)
+    for (uint8_t port = 0; port < kRtovrPorts; ++port) {
+        // 璁＄畻 port 鐨?LSB 浣嶇疆锛坴alid 浣嶏級
+        int msb = static_cast<int>(kRtovrMsbBitIndex) - static_cast<int>(kRtovrBitsPerPort) * port;
+        int lsb = msb - 6;  // valid 浣嶅湪 LSB
+        
+        int word_idx = lsb / 32;
+        int bit_in_word = lsb % 32;
+        
+        if (word_idx >= (int)rtovr_words.size()) break;
+        
+        // 鎻愬彇 valid 浣嶏紙姣忎釜绔彛鐨勭涓€浣嶏紝鍦?LSB锛?        bool valid = (rtovr_words[word_idx] >> bit_in_word) & 0x1;
+        if (valid) {
+            active_ports.push_back(port);
+        }
+    }
+    
+    return active_ports;
+}
+
+std::vector<IqInstructionFile> SubOpInstructions::get_iq_files() const {
+    // ========================================================================
+    // 3. 鏍规嵁 slot 鍒嗛厤鏂规鐢熸垚 IQ 鎸囦护鏂囦欢
+    // ========================================================================
+    // 鍏抽敭鐐癸細
+    //   1. 鏍规嵁 para_slot_accesses 鍒ゆ柇姣忎釜 slot 鏄惁闇€瑕佺敓鎴愭寚浠?    //      - 渚嬪锛氬鏋?slot 0 鍒嗛厤浜嗚 input锛屽氨鐢熸垚 slot 0 鐨勮鎸囦护
+    //      - 濡傛灉 slot 1 娌℃湁鍒嗛厤璇?input锛屽氨涓嶇敓鎴?slot 1 鐨勮鎸囦护
+    // 
+    //   2. 璁剧疆寤惰繜锛圖LY锛夊疄鐜版椂闂村垎鐗?    //      - DLY = slot_id锛氳涓嶅悓 slot 鐨勬寚浠ゅ湪涓嶅悓鏃堕棿鎵ц
+    //      - 渚嬪锛歴lot 0 鐨?DLY=0锛宻lot 1 鐨?DLY=1锛宻lot 2 鐨?DLY=2
+    //      - 杩欐牱纭欢浼氭寜椤哄簭鎵ц锛岄伩鍏嶅悓鏃惰闂悓涓€ bank
+    // 
+    //   3. 璁＄畻鎸囦护鐨勫欢杩熻鍖归厤璁＄畻 slot
+    //      - 璁＄畻鍦ㄦ渶鍚庝竴涓?slot 鎵ц锛屾墍浠ヨ绠楁寚浠ょ殑 DLY = compute_slot + 寤惰繜
+    // ========================================================================
+    std::vector<IqInstructionFile> files;
+    
+    // 杈呭姪鍑芥暟锛氬簭鍒楀寲寰寚浠ゅご閮紙41 bits锛?    constexpr uint32_t BITS_EMBED = 3, BITS_EMBED_END = 6, BITS_LOOPS = 10;
+    constexpr uint32_t BITS_COND = 7, BITS_DLY = 3, BITS_INC = 4, BITS_INC_EMBED = 6;
+    constexpr uint32_t MASK_EMBED = (1u << BITS_EMBED) - 1;
+    constexpr uint32_t MASK_EMBED_END = (1u << BITS_EMBED_END) - 1;
+    constexpr uint32_t MASK_LOOPS = (1u << BITS_LOOPS) - 1;
+    constexpr uint32_t MASK_COND = (1u << BITS_COND) - 1;
+    constexpr uint32_t MASK_DLY = (1u << BITS_DLY) - 1;
+    constexpr uint32_t MASK_INC = (1u << BITS_INC) - 1;
+    constexpr uint32_t MASK_INC_EMBED = (1u << BITS_INC_EMBED) - 1;
+
+    auto serialize_header_bits = [](uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops,
+                                    uint8_t cond, uint8_t dly, uint8_t inc,
+                                    uint8_t embed_end_bits, uint8_t inc_embed_bits) -> uint64_t {
+        uint64_t bits = 0;
+        uint32_t pos = 0;
+
+        uint8_t embed_end = (embed == 0) ? (embed_end_bits & MASK_EMBED_END) : 0u;
+        uint8_t inc_embed = (embed == 0) ? (inc_embed_bits & MASK_INC_EMBED) : 0u;
+
+        // Pack bits starting from LSB
+        bits |= (uint64_t)(inc_embed & MASK_INC_EMBED) << pos; pos += BITS_INC_EMBED;
+        bits |= (uint64_t)(inc & MASK_INC) << pos; pos += BITS_INC;
+        bits |= (uint64_t)(dly & MASK_DLY) << pos; pos += BITS_DLY;
+        bits |= (uint64_t)(cond & MASK_COND) << pos; pos += BITS_COND;
+        bits |= (uint64_t)(loops & MASK_LOOPS) << pos; pos += BITS_LOOPS;
+        bits |= (uint64_t)(embed_end & MASK_EMBED_END) << pos; pos += BITS_EMBED_END;
+        bits |= (uint64_t)(embed & MASK_EMBED) << pos; pos += BITS_EMBED;
+        bits |= (uint64_t)(jump & 1u) << pos; pos += 1;
+        bits |= (uint64_t)(vld & 1u) << pos; pos += 1;
+        
+        return bits;
+    };
+
+    auto serialize_header = [&](uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops,
+                               uint8_t cond, uint8_t dly, uint8_t inc,
+                               uint8_t embed_end_bits, uint8_t inc_embed_bits) -> std::vector<uint8_t> {
+        uint64_t bits = serialize_header_bits(vld, jump, embed, loops, cond, dly, inc, embed_end_bits, inc_embed_bits);
+        std::vector<uint8_t> bytes;
+        for (int i = 5; i >= 0; --i)
+            bytes.push_back(static_cast<uint8_t>((bits >> (i * 8)) & 0xFF));
+        return bytes;
+    };
+    
+    // Adjusted Code Serialization: Pack MSB Byte First
+    auto serialize_code = [](uint64_t code, uint16_t code_bits) -> std::vector<uint8_t> {
+        std::vector<uint8_t> bytes;
+        uint16_t num_bytes = (code_bits + 7) / 8;
+        for (int i = num_bytes - 1; i >= 0; --i) { // Start from MSB Byte
+            bytes.push_back((code >> (i * 8)) & 0xFF);
+        }
+        return bytes;
+    };
+    
+    // Adjusted RTOVR Serialization: Pack Big Endian
+    // RtoVR CRU is 280 bits (40*7). pack_cru_rtovr_words outputs 10x32-bit words (320b, tail padded).
+    // For simulator we need exactly 280 bits => 35 bytes: words[0..7] (32 bytes) + words[8] top 3 bytes.
+    auto serialize_rtovr_code = [](const std::vector<uint32_t>& rtovr_words) -> std::vector<uint8_t> {
+        std::vector<uint8_t> bytes;
+        const size_t max_bytes = 35;
+        for (size_t i = 0; i < rtovr_words.size() && bytes.size() < max_bytes; ++i) {
+            uint32_t word = rtovr_words[i];
+            if (i == 8) {
+                // Need bits [279:256] = word8 bits [23:0] => bytes j=2..0. Skip j=3 (padding bits 287:280).
+                for (int j = 2; j >= 0 && bytes.size() < max_bytes; --j) {
+                    bytes.push_back((word >> (j * 8)) & 0xFF);
+                }
+                continue;
+            }
+            for (int j = 3; j >= 0 && bytes.size() < max_bytes; --j) {
+                bytes.push_back((word >> (j * 8)) & 0xFF);
+            }
+        }
+        return bytes;
+    };
+    
+    // make_instruction with Bit Packing support
+    auto make_instruction = [&](uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops, 
+                                uint8_t cond, uint8_t dly, int8_t inc,
+                                uint8_t embed_end_bits, uint8_t inc_embed_bits,
+                                const std::vector<uint8_t>& code_bytes,
+                                int code_bits = -1) -> std::vector<uint8_t> {
+        
+        // 涓嶅悓 IQ 鐨?CODE 浣嶅涓嶅悓锛屾晠姣忚瀛楄妭鏁颁笉鍚岋細num_bytes = ceil((41+code_bits)/8)锛涗豢鐪熷櫒鍙栨瘡琛屼綆 instruction_bits 浣嶏紝鏁呭彸瀵归綈銆佸ぇ绔€?        if (code_bits > 0 && code_bits <= 23) { // 41 + 23 = 64
+             uint64_t h = serialize_header_bits(vld, jump, embed, loops, cond, dly, inc, embed_end_bits, inc_embed_bits);
+             uint64_t c = 0;
+             for (uint8_t b : code_bytes) {
+                 c = (c << 8) | b;
+             }
+             if (code_bits < 64) {
+                 c &= ((1ULL << code_bits) - 1);
+             }
+             uint64_t total = (h << code_bits) | c;
+             int total_width = 41 + code_bits;
+             int num_bytes = (total_width + 7) / 8;  // FPMUL 44b->6 瀛楄妭, FPADD 45b->6 瀛楄妭, UR 璇?53b->7 瀛楄妭
+             std::vector<uint8_t> ret;
+             for (int i = num_bytes - 1; i >= 0; --i) {
+                 ret.push_back(static_cast<uint8_t>((total >> (i * 8)) & 0xFF));
+             }
+             return ret;
+        } else {
+            // Standard Byte Concatenation for long payloads (e.g. RtoVR 240 bits)
+            auto header = serialize_header(vld, jump, embed, loops, cond, dly, inc, embed_end_bits, inc_embed_bits);
+            header.insert(header.end(), code_bytes.begin(), code_bytes.end());
+            return header;
+        }
+    };
+    
+
+    // 宓屽寰幆鍙傛暟
+    const bool can_nest_outer = (para_embed_loops > 0 && para_embed_loops <= 7);
+    const bool can_nest_inner = (para_inner_loops > 0 && para_inner_loops <= 7);
+    const bool exact_cover = (can_nest_outer && can_nest_inner) &&
+        (static_cast<uint32_t>(para_embed_loops) * static_cast<uint32_t>(para_inner_loops) == para_total_steps);
+    const bool use_nested = exact_cover;
+    const uint8_t embed_outer = use_nested ? 1u : 0u;
+    const uint16_t loops_outer = use_nested ? ((para_embed_loops >= 1) ? (para_embed_loops - 1) : 0) : 0;
+    const uint16_t loops_inner = use_nested ? ((para_inner_loops >= 1) ? (para_inner_loops - 1) : 0) : 
+                                              ((para_total_steps >= 1) ? (para_total_steps - 1) : 0);
+    const uint8_t inc_outer = use_nested ? static_cast<uint8_t>(para_inner_loops) : 0u;
+    const uint8_t inc_inner = 1u;
+    const uint8_t embed_end_bits_main = 0u;
+    const uint8_t embed_end_bits_end = use_nested ? (1u << 0) : 0u;
+    const uint8_t inc_embed_bits = use_nested ? (1u << 0) : 0u;
+    const bool is_float = (para_dtype == SubDataType::FP32 || para_dtype == SubDataType::FP16);
+    
+    const uint8_t num_slots = (para_num_slots > 0) ? para_num_slots : 1;
+    
+    // 鎵惧埌鎵ц璁＄畻鐨?slot锛堥€氬父鏄渶鍚庝竴涓級
+    uint8_t compute_slot = 0;
+    if (num_slots > 1) {
+        for (uint8_t s = 0; s < para_slot_accesses.size(); ++s) {
+            if (para_slot_accesses[s].has_compute) {
+                compute_slot = s;
+                break;
+            }
+        }
+    }
+    
+    // 鐢熸垚 UR 璇荤鍙?0: input
+    {
+        IqInstructionFile file;
+        file.para_iq_id = 14;
+        file.para_iq_name = "ur_rdata_0";
+        file.para_width_bits = 41 + 12; // Header 41b + Code 12b
+
+
+
+        for (uint8_t slot_id = 0; slot_id < num_slots; ++slot_id) {
+            if (slot_id < para_ur_read_crus.size()) {
+                bool need_read = (num_slots == 1) || 
+                                 (slot_id < para_slot_accesses.size() && 
+                                  para_slot_accesses[slot_id].input_slot == slot_id);
+                if (need_read) {
+                    uint32_t code = aiacc::op::extract_ur_read_port0_code(para_ur_read_crus[slot_id]);
+                    auto code_bytes = serialize_code(code, 12);
+
+                    // Bank conflict: each slot adds 1 cycle delay to serialize same-bank reads
+                    // slot 0 -> DLY=4, slot 1 -> DLY=5, slot 2 -> DLY=6, etc.
+                    uint32_t base_dly = 4;
+                    uint32_t total_dly = base_dly + slot_id;  // Serialize reads from same bank
+
+                    while (total_dly > 7) {
+                        auto zero_code = serialize_code(0, 12);
+                        auto dummy = make_instruction(1, 0, 0, 0, 0, 7, 0, 0, 0, zero_code, 12);
+                        file.para_data.insert(file.para_data.end(), dummy.begin(), dummy.end());
+                        total_dly -= 7;
+                    }
+
+                    uint8_t dly = static_cast<uint8_t>(total_dly);
+                    if (use_nested) {
+                        auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, dly, inc_outer, 0u, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                        auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, inc_inner, embed_end_bits_main, inc_embed_bits, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                    } else {
+                        auto inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, inc_inner, 0u, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                    }
+                }
+            }
+        }
+        auto code_bytes = serialize_code(0, 12);
+        auto end_inst = make_instruction(1, 1, 0, 0, 0, 0, 0, embed_end_bits_end, 0u, code_bytes, 12);
+        file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+        files.push_back(file);
+    }
+    
+    // 鐢熸垚 UR 璇荤鍙?1: other
+    {
+        IqInstructionFile file;
+        file.para_iq_id = 15;
+        file.para_iq_name = "ur_rdata_1";
+        file.para_width_bits = 41 + 12; // Header 41b + Code 12b
+
+        for (uint8_t slot_id = 0; slot_id < num_slots; ++slot_id) {
+            if (slot_id < para_ur_read_crus.size()) {
+                bool need_read = (num_slots == 1) || 
+                                 (slot_id < para_slot_accesses.size() && 
+                                  para_slot_accesses[slot_id].other_slot == slot_id);
+                if (need_read) {
+                    uint32_t code = aiacc::op::extract_ur_read_port1_code(para_ur_read_crus[slot_id]);
+                    auto code_bytes = serialize_code(code, 12);
+                    
+                    // Bank conflict: slot 1 for other, DLY = base + slot = 0 + 1 = 1
+                    uint32_t base_dly = 0;
+                    uint32_t total_dly = base_dly + slot_id;
+                    while (total_dly > 7) {
+                        auto zero_code = serialize_code(0, 12);
+                        auto dummy = make_instruction(1, 0, 0, 0, 0, 7, 0, 0, 0, zero_code, 12);
+                        file.para_data.insert(file.para_data.end(), dummy.begin(), dummy.end());
+                        total_dly -= 7;
+                    }
+                    uint8_t dly = static_cast<uint8_t>(total_dly);
+
+                    if (use_nested) {
+                        auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, dly, inc_outer, 0u, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                        auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, inc_inner, embed_end_bits_main, inc_embed_bits, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                    } else {
+                        auto inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, inc_inner, 0u, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                    }
+                }
+            }
+        }
+        auto code_bytes = serialize_code(0, 12);
+        auto end_inst = make_instruction(1, 1, 0, 0, 0, 0, 0, embed_end_bits_end, 0u, code_bytes, 12);
+        file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+        files.push_back(file);
+    }
+    
+    // 鐢熸垚 UR 璇荤鍙?2: alpha
+    {
+        IqInstructionFile file;
+        file.para_iq_id = 16;
+        file.para_iq_name = "ur_rdata_2";
+        file.para_width_bits = 41 + 12; // Header 41b + Code 12b
+
+        for (uint8_t slot_id = 0; slot_id < num_slots; ++slot_id) {
+            if (slot_id < para_ur_read_crus.size()) {
+                bool need_read = (num_slots == 1) || 
+                                 (slot_id < para_slot_accesses.size() && 
+                                  para_slot_accesses[slot_id].alpha_slot == slot_id);
+                if (need_read) {
+                    uint32_t code = aiacc::op::extract_ur_read_port2_code(para_ur_read_crus[slot_id]);
+                    auto code_bytes = serialize_code(code, 12);
+                    
+                    // Bank conflict: slot 2 for alpha, DLY = base + slot = 0 + 2 = 2
+                    uint32_t base_dly = 0;
+                    uint32_t total_dly = base_dly + slot_id;
+                    while (total_dly > 7) {
+                        auto zero_code = serialize_code(0, 12);
+                        auto dummy = make_instruction(1, 0, 0, 0, 0, 7, 0, 0, 0, zero_code, 12);
+                        file.para_data.insert(file.para_data.end(), dummy.begin(), dummy.end());
+                        total_dly -= 7;
+                    }
+                    uint8_t dly = static_cast<uint8_t>(total_dly);
+
+                    if (use_nested) {
+                        auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, dly, 0, 0u, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                        auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, embed_end_bits_main, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                    } else {
+                        auto inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, 0u, 0u, code_bytes, 12);
+                        file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                    }
+                }
+            }
+        }
+        auto code_bytes = serialize_code(0, 12);
+        auto end_inst = make_instruction(1, 1, 0, 0, 0, 0, 0, embed_end_bits_end, 0u, code_bytes, 12);
+        file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+        files.push_back(file);
+    }
+    
+    // 鐢熸垚 RtoVR 璺敱鎸囦护
+    if (!para_rtovr_stage1.empty()) {
+        // 鎻愬彇瀹為檯浣跨敤鐨勭鍙?        auto active_ports = extract_active_rtovr_ports(para_rtovr_stage1);
+        
+        for (uint8_t port : active_ports) {
+            IqInstructionFile file;
+            file.para_iq_id = 24;
+            file.para_iq_name = "rtovr-" + std::to_string(port);
+            file.para_width_bits = 41 + 7; // Header 41b + Code 7b (per port)
+
+            const uint8_t port_code = extract_rtovr_port_code(para_rtovr_stage1, port);
+            
+            auto code_bytes = serialize_code(port_code, 7);
+            uint8_t dly = 0;  // RtoVR閰嶇疆鍦ㄧ▼搴忓紑濮嬫椂鍗崇敓鏁堬紙闈欐€佽矾鐢憋級
+            
+            if (use_nested) {
+                auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, dly, 0, 0u, 0u, code_bytes, 7);
+                file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, embed_end_bits_main, 0u, code_bytes, 7);
+                file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+            } else {
+                auto inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, 0u, 0u, code_bytes, 7);
+                file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+            }
+            
+            auto zero_code = serialize_code(0, 7);
+            auto end_inst = make_instruction(1, 1, 0, 0, 0, dly, 0, embed_end_bits_end, 0u, zero_code, 7);
+            file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+            files.push_back(file);
+        }
+    }
+    
+    // 鐢熸垚璁＄畻鍗曞厓鎸囦护
+    if (is_float) {
+        // FPMUL锛?1+3=44 bit锛屼豢鐪熷櫒鍙栦綆 44 浣嶏紝鏁?6 瀛楄妭/鏉″彸瀵归綈锛?2 涓?hex 瀛楃/琛岋級
+        {
+            IqInstructionFile file;
+            file.para_iq_id = 5;
+            file.para_iq_name = "fpmul";
+            file.para_width_bits = 41 + 3; // 44 bits -> 6 bytes per line
+
+            auto code_bytes = serialize_code(para_fpmul_inst, 3);
+            const uint8_t fpmul_dly = 1;
+            if (use_nested) {
+                auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, fpmul_dly, 0, 0u, 0u, code_bytes, 3);
+                file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, fpmul_dly, 0, embed_end_bits_main, 0u, code_bytes, 3);
+                file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+            } else {
+                auto inst = make_instruction(1, 0, 0u, loops_inner, 0, fpmul_dly, 0, 0u, 0u, code_bytes, 3);
+                file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+            }
+            auto zero_code = serialize_code(0, 3);
+            auto end_inst = make_instruction(1, 1, 0, 0, 0, fpmul_dly, 0, embed_end_bits_end, 0u, zero_code, 3);
+            file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+            files.push_back(file);
+        }
+        
+        // RtoVR Stage2锛氫笌 FPMUL 鍚屽懆鏈熼厤缃?FPADD 杈撳叆璺敱
+        if (!para_rtovr_stage2.empty()) {
+            auto active_ports = extract_active_rtovr_ports(para_rtovr_stage2);
+            
+            for (uint8_t port : active_ports) {
+                IqInstructionFile file;
+                file.para_iq_id = 25;
+                file.para_iq_name = "rtovr-" + std::to_string(port);
+                file.para_width_bits = 41 + 7;
+
+                const uint8_t port_code = extract_rtovr_port_code(para_rtovr_stage2, port);
+                
+                auto code_bytes = serialize_code(port_code, 7);
+                const uint8_t rtovr2_dly = 4;  // 閰嶇疆鍦?cycle 4锛宑ycle 5 鐢熸晥锛團PMUL 杈撳嚭鏃跺埢锛?                
+                if (use_nested) {
+                    auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, rtovr2_dly, 0, 0u, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                    auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, rtovr2_dly, 0, embed_end_bits_main, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                } else {
+                    auto inst = make_instruction(1, 0, 0u, loops_inner, 0, rtovr2_dly, 0, 0u, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                }
+                
+                auto zero_code = serialize_code(0, 7);
+                auto end_inst = make_instruction(1, 1, 0, 0, 0, rtovr2_dly, 0, embed_end_bits_end, 0u, zero_code, 7);
+                file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+                files.push_back(file);
+            }
+        }
+        
+        // FPADD锛欴LY=6 浣?cycle 6 鎵ц锛坈ycle 5 鐨?tick 鍚?FPMUL 缁撴灉鎵嶅啓鍏?dr_d锛夛紱FPADD 缁撴灉鍦?cycle 10 鐨?tick 鍚庡氨缁?        // 涓?smc_simulator 瀵归綈锛欳ode 5b (valid, src_prec, dst_prec, update_st, is_sub)
+        {
+            IqInstructionFile file;
+            file.para_iq_id = 6;
+            file.para_iq_name = "fpadd";
+            file.para_width_bits = 41 + 5; // Header 41b + Code 5b
+
+            auto code_bytes = serialize_code(para_fpadd_inst, 5);
+            const uint8_t fpadd_dly = 5;  // FPMUL.DLY(1) + FPMUL latency(4) = 5
+            if (use_nested) {
+                auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, fpadd_dly, 0, 0u, 0u, code_bytes, 5);
+                file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, fpadd_dly, 0, embed_end_bits_main, 0u, code_bytes, 5);
+                file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+            } else {
+                auto inst = make_instruction(1, 0, 0u, loops_inner, 0, fpadd_dly, 0, 0u, 0u, code_bytes, 5);
+                file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+            }
+            auto zero_code = serialize_code(0, 5);
+            auto end_inst = make_instruction(1, 1, 0, 0, 0, fpadd_dly, 0, embed_end_bits_end, 0u, zero_code, 5);
+            file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+            files.push_back(file);
+        }
+        
+        // RtoVR Stage3锛欴LY=6锛屽湪 FPADD 缁撴灉灏辩华鍓嶉厤缃?UVR_WDATA_0 <- DR_FPADD_D
+        if (!para_rtovr_stage3.empty()) {
+            auto active_ports = extract_active_rtovr_ports(para_rtovr_stage3);
+            
+            for (uint8_t port : active_ports) {
+                IqInstructionFile file;
+                file.para_iq_id = 26;
+                file.para_iq_name = "rtovr-" + std::to_string(port);
+                file.para_width_bits = 41 + 7;
+
+                const uint8_t port_code = extract_rtovr_port_code(para_rtovr_stage3, port);
+                
+                auto code_bytes = serialize_code(port_code, 7);
+                uint32_t rtovr3_total_dly = 8;  // 閰嶇疆鍦?cycle 8锛宑ycle 9 鐢熸晥锛堜笌 FPADD 缁撴灉瀵归綈锛?                while (rtovr3_total_dly > 7) {
+                    auto zero_code_tmp = serialize_code(0, 7);
+                    auto dummy = make_instruction(1, 0, 0, 0, 0, 7, 0, 0, 0, zero_code_tmp, 7);
+                    file.para_data.insert(file.para_data.end(), dummy.begin(), dummy.end());
+                    rtovr3_total_dly -= 8;
+                }
+                const uint8_t rtovr3_dly = static_cast<uint8_t>(rtovr3_total_dly);
+                
+                if (use_nested) {
+                    auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, rtovr3_dly, 0, 0u, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                    auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, rtovr3_dly, 0, embed_end_bits_main, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                } else {
+                    auto inst = make_instruction(1, 0, 0u, loops_inner, 0, rtovr3_dly, 0, 0u, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                }
+                
+                auto zero_code = serialize_code(0, 7);
+                auto end_inst = make_instruction(1, 1, 0, 0, 0, rtovr3_dly, 0, embed_end_bits_end, 0u, zero_code, 7);
+                file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+                files.push_back(file);
+            }
+        }
+    } else {
+        // INTADD锛氫笌 smc_simulator 瀵归綈锛孋ode 13b (valid, s0/s1/s2_prec, sign0/1/2, sign_d, update_st, is_sub)
+        {
+            IqInstructionFile file;
+            file.para_iq_id = 0;
+            file.para_iq_name = "intadd";
+            file.para_width_bits = 41 + 13; // Header 41b + Code 13b
+            auto code_bytes = serialize_code(para_intadd_inst, 13);
+            uint8_t dly = static_cast<uint8_t>(compute_slot + 2);
+            if (use_nested) {
+                auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, dly, 0, 0u, 0u, code_bytes, 13);
+                file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, embed_end_bits_main, 0u, code_bytes, 13);
+                file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+            } else {
+                auto inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, 0u, 0u, code_bytes, 13);
+                file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+            }
+            auto zero_code = serialize_code(0, 13);
+            auto end_inst = make_instruction(1, 1, 0, 0, 0, dly, 0, embed_end_bits_end, 0u, zero_code, 13);
+            file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+            files.push_back(file);
+        }
+        
+        // RtoVR Stage2 (鏁存暟妯″紡)
+        if (!para_rtovr_stage2.empty()) {
+            auto active_ports = extract_active_rtovr_ports(para_rtovr_stage2);
+            
+            for (uint8_t port : active_ports) {
+                IqInstructionFile file;
+                file.para_iq_id = 27;
+                file.para_iq_name = "rtovr-" + std::to_string(port);
+                file.para_width_bits = 41 + 7;
+                
+                // 鎻愬彇璇ョ鍙ｇ殑 7-bit 閰嶇疆
+                // pack_cru_rtovr_words() 浣跨敤閫嗗簭锛歅ort k 鍦?bits [279-7*k : 273-7*k]
+                uint32_t bit_lsb = 273 - port * 7;
+                uint32_t word_idx = bit_lsb / 32;
+                uint32_t bit_in_word = bit_lsb % 32;
+                
+                uint8_t port_code = 0;
+                if (word_idx < para_rtovr_stage2.size()) {
+                    port_code = (para_rtovr_stage2[word_idx] >> bit_in_word) & 0x7F;
+                    if (bit_in_word > 25 && word_idx + 1 < para_rtovr_stage2.size()) {
+                        uint8_t high_bits = para_rtovr_stage2[word_idx + 1] & ((1 << (7 - (32 - bit_in_word))) - 1);
+                        port_code |= (high_bits << (32 - bit_in_word));
+                    }
+                }
+                
+                auto code_bytes = serialize_code(port_code, 7);
+                uint8_t dly = static_cast<uint8_t>(compute_slot + 3);
+                
+                if (use_nested) {
+                    auto outer_inst = make_instruction(1, 0, embed_outer, loops_outer, 0, dly, 0, 0u, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                    auto inner_inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, embed_end_bits_main, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                } else {
+                    auto inst = make_instruction(1, 0, 0u, loops_inner, 0, dly, 0, 0u, 0u, code_bytes, 7);
+                    file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                }
+                
+                auto zero_code = serialize_code(0, 7);
+                auto end_inst = make_instruction(1, 1, 0, 0, 0, dly, 0, embed_end_bits_end, 0u, zero_code, 7);
+                file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+                files.push_back(file);
+            }
+        }
+    }
+    
+    // 鐢熸垚 UR 鍐欑鍙ｆ寚浠わ紙浠跨湡鍣ㄥ彇姣忚浣?69 浣嶏紝VLD=bit68銆丆ODE=bit27-0锛屾晠 9 瀛楄妭/鏉″彸瀵归綈锛?    {
+        IqInstructionFile file;
+        file.para_iq_id = 18;
+        file.para_iq_name = "ur_wdata_0";
+        file.para_width_bits = 41 + 28;  // 69 bits -> 9 bytes per line
+
+        // 浠跨湡鍣?load_hex 鍙栨瘡琛屾暣鏁扮殑浣?69 浣嶏紝VLD=bit68锛孋ODE=bit27-0銆傚繀椤?9 瀛楄妭/鏉°€佸ぇ绔€佸彸瀵归綈銆?        auto serialize_ur_wdata_inst = [&](uint8_t vld, uint8_t jump, uint8_t embed, uint16_t loops,
+                                           uint8_t cond, uint8_t dly, uint8_t inc,
+                                           uint8_t embed_end_bits, uint8_t inc_embed_bits,
+                                           uint32_t code_28) -> std::vector<uint8_t> {
+            uint64_t header = serialize_header_bits(vld, jump, embed, loops, cond, dly, inc, embed_end_bits, inc_embed_bits);
+            // 69-bit (41+28) exceeds uint64_t, must use 128-bit to avoid truncation.
+            unsigned __int128 inst_69 = (static_cast<unsigned __int128>(header) << 28) |
+                                        static_cast<unsigned __int128>(code_28 & 0x0FFFFFFFu);
+            std::vector<uint8_t> bytes;
+            for (int i = 8; i >= 0; --i)  // 澶х锛歜ytes[0]=inst_69[68:64], bytes[8]=inst_69[7:0]
+                bytes.push_back(static_cast<uint8_t>((inst_69 >> (i * 8)) & 0xFF));
+            return bytes;
+        };
+
+        for (uint8_t slot_id = 0; slot_id < num_slots; ++slot_id) {
+            if (slot_id < para_ur_write_crus.size()) {
+                bool need_write = (num_slots == 1) || 
+                                 (slot_id < para_slot_accesses.size() && 
+                                  para_slot_accesses[slot_id].output_slot == slot_id);
+                
+                if (need_write) {
+                    uint32_t code = aiacc::op::extract_ur_write_port0_code(para_ur_write_crus[slot_id]);
+                    uint32_t total_dly = compute_slot + 9;  // UR-W0 DLY=9: FPADD.DLY(5) + FPADD.latency(4) = 9
+                    
+                    const uint8_t dly = emit_dummy_for_long_delay(total_dly, [&]() {
+                        auto dummy = serialize_ur_wdata_inst(1, 0, 0, 0, 0, kMaxDlyField, 0, 0, 0, 0);
+                        file.para_data.insert(file.para_data.end(), dummy.begin(), dummy.end());
+                    });
+                    
+                    if (use_nested) {
+                        auto outer_inst = serialize_ur_wdata_inst(1, 0, embed_outer, loops_outer, 0, dly, inc_outer, 0u, 0u, code);
+                        file.para_data.insert(file.para_data.end(), outer_inst.begin(), outer_inst.end());
+                        auto inner_inst = serialize_ur_wdata_inst(1, 0, 0u, loops_inner, 0, dly, inc_inner, embed_end_bits_main, inc_embed_bits, code);
+                        file.para_data.insert(file.para_data.end(), inner_inst.begin(), inner_inst.end());
+                    } else {
+                        auto inst = serialize_ur_wdata_inst(1, 0, 0u, loops_inner, 0, dly, inc_inner, 0u, 0u, code);
+                        file.para_data.insert(file.para_data.end(), inst.begin(), inst.end());
+                    }
+                }
+            }
+        }
+        
+        uint32_t total_dly = compute_slot + 11;
+        const uint8_t dly = emit_dummy_for_long_delay(total_dly, [&]() {
+            auto dummy = serialize_ur_wdata_inst(1, 0, 0, 0, 0, kMaxDlyField, 0, 0, 0, 0);
+            file.para_data.insert(file.para_data.end(), dummy.begin(), dummy.end());
+        });
+        auto end_inst = serialize_ur_wdata_inst(1, 1, 0, 0, 0, dly, 0, embed_end_bits_end, 0u, 0);
+        file.para_data.insert(file.para_data.end(), end_inst.begin(), end_inst.end());
+        files.push_back(file);
+    }
+    
+    return files;
+}
+
+// ============================================================================
+// OpBase 鎺ュ彛瀹炵幇
+// ============================================================================
+
+std::string SubOp::get_name() const {
+    return "FusedScaleSub";
+}
+
+OpInstructionsBase* SubOp::compile(const app::AppOperatorRequest& req) {
+    SubOpParams params;
+    params.para_n = req.para_dimensions.para_n;
+    params.para_c = req.para_dimensions.para_c;
+    params.para_h = req.para_dimensions.para_h;
+    params.para_w = req.para_dimensions.para_w;
+    
+    // 瑙ｆ瀽鏁版嵁绫诲瀷
+    if (!req.para_inputs.empty()) {
+        const auto& first_input = req.para_inputs.begin()->second;
+        switch (first_input.para_dtype) {
+            case app::AppDataType::FLOAT32: params.para_dtype = SubDataType::FP32; break;
+            case app::AppDataType::FLOAT16: params.para_dtype = SubDataType::FP16; break;
+            case app::AppDataType::INT32:
+                params.para_dtype = SubDataType::INT32;
+                params.para_input_signed = params.para_other_signed = params.para_alpha_signed = true;
+                break;
+            case app::AppDataType::INT8:
+                params.para_dtype = SubDataType::INT8;
+                params.para_input_signed = params.para_other_signed = params.para_alpha_signed = true;
+                break;
+            default: params.para_dtype = SubDataType::FP32; break;
+        }
+    }
+    
+    // UR 瀛樺偍甯冨眬锛氶粯璁ゅ垎绂诲竷灞€渚夸簬浠跨湡锛沴ayout_mode=="bank_conflict" 鏃剁敤鍚?bank 涓嶅悓 addr 娴嬪啿绐併€?    if (req.para_layout_mode == "bank_conflict") {
+        params.para_input_bank = 0;  params.para_input_addr = 0;
+        params.para_other_bank = 0;  params.para_other_addr = 64;
+        params.para_alpha_bank = 0;  params.para_alpha_addr = 128;
+        params.para_output_bank = 1; params.para_output_addr = 0;
+    } else {
+        params.para_input_bank = 0;  params.para_input_addr = 0;
+        params.para_other_bank = 1;  params.para_other_addr = 0;
+        params.para_alpha_bank = 2;  params.para_alpha_addr = 0;
+        params.para_output_bank = 3; params.para_output_addr = 0;
+    }
+
+    SubOpInstructions* insts = new SubOpInstructions();
+    *insts = compile(params);
+    return insts;
+}
+
+bool SubOp::calculate_golden(const app::AppOperatorRequest& req, 
+                            std::vector<uint8_t>& golden_bin) {
+    golden_bin.clear();
+    
+    const auto& inputs = req.para_inputs;
+    const auto& params = req.para_parameters;
+    
+    std::vector<float> input_f32, other_f32, alpha_f32;
+    app::AppDataType dtype = app::AppDataType::FLOAT32;
+    
+    if (inputs.find("input_tensor") != inputs.end()) {
+        dtype = inputs.at("input_tensor").para_dtype;
+        input_f32 = inputs.at("input_tensor").para_data_f32;
+    }
+    if (inputs.find("other_tensor") != inputs.end()) {
+        other_f32 = inputs.at("other_tensor").para_data_f32;
+    }
+    if (params.find("alpha") != params.end()) {
+        alpha_f32 = params.at("alpha").para_data_f32;
+    }
+    
+    const uint32_t w = req.para_dimensions.para_w;
+    size_t n = std::min(input_f32.size(), other_f32.size());
+    
+    for (size_t i = 0; i < n; ++i) {
+        float a = (!alpha_f32.empty() && w > 0) ? alpha_f32[i % w] : 1.0f;
+        float out = input_f32[i] + a * other_f32[i];
+        
+        if (dtype == app::AppDataType::FLOAT32 || dtype == app::AppDataType::FLOAT16) {
+            if (dtype == app::AppDataType::FLOAT32) {
+                uint32_t bits; memcpy(&bits, &out, sizeof(float));
+                golden_bin.push_back(bits & 0xFF);
+                golden_bin.push_back((bits >> 8) & 0xFF);
+                golden_bin.push_back((bits >> 16) & 0xFF);
+                golden_bin.push_back((bits >> 24) & 0xFF);
+            } else {
+                uint16_t bits = app::float32_to_float16(out);
+                golden_bin.push_back(bits & 0xFF);
+                golden_bin.push_back((bits >> 8) & 0xFF);
+            }
+        } else if (dtype == app::AppDataType::INT32) {
+            int32_t out_val = static_cast<int32_t>(input_f32[i]) + 
+                             static_cast<int32_t>(a) * static_cast<int32_t>(other_f32[i]);
+            uint32_t bits = static_cast<uint32_t>(out_val);
+            golden_bin.push_back(bits & 0xFF);
+            golden_bin.push_back((bits >> 8) & 0xFF);
+            golden_bin.push_back((bits >> 16) & 0xFF);
+            golden_bin.push_back((bits >> 24) & 0xFF);
+        } else if (dtype == app::AppDataType::INT8) {
+            int16_t out_val = static_cast<int8_t>(input_f32[i]) + 
+                             static_cast<int8_t>(a) * static_cast<int8_t>(other_f32[i]);
+            if (out_val > 127) out_val = 127;
+            if (out_val < -128) out_val = -128;
+            golden_bin.push_back(static_cast<uint8_t>(out_val));
+        }
+    }
+    
+    return true;
+}
+
+void SubOp::fill_random_request(app::AppOperatorRequest& req, 
+                                std::mt19937& rng,
+                                std::uniform_real_distribution<float>& data_dist,
+                                const std::string& dtype_str) {
+    req.para_operator = "FusedScaleSub";
+    
+    app::AppDataType target_type = app::AppDataType::FLOAT32;
+    if (dtype_str == "fp16") target_type = app::AppDataType::FLOAT16;
+    else if (dtype_str == "fp32") target_type = app::AppDataType::FLOAT32;
+    else if (dtype_str == "int32") target_type = app::AppDataType::INT32;
+    else if (dtype_str == "int8") target_type = app::AppDataType::INT8;
+
+    uint32_t total = req.para_dimensions.para_n * req.para_dimensions.para_c * 
+                     req.para_dimensions.para_h * req.para_dimensions.para_w;
+
+    // 鐢熸垚 input_tensor
+    app::AppTensorDesc input_desc;
+    input_desc.para_name = "input_tensor";
+    input_desc.para_dtype = target_type;
+    input_desc.para_shape = {req.para_dimensions.para_n, req.para_dimensions.para_c,
+                             req.para_dimensions.para_h, req.para_dimensions.para_w};
+    if (target_type == app::AppDataType::INT32 || target_type == app::AppDataType::INT8) {
+        std::uniform_int_distribution<int32_t> int_dist(-100, 100);
+        for (uint32_t i = 0; i < total; ++i) {
+            input_desc.para_data_f32.push_back(static_cast<float>(int_dist(rng)));
+        }
+    } else {
+        for (uint32_t i = 0; i < total; ++i) {
+            input_desc.para_data_f32.push_back(data_dist(rng));
+        }
+    }
+    req.para_inputs["input_tensor"] = input_desc;
+
+    // 鐢熸垚 other_tensor
+    app::AppTensorDesc other_desc = input_desc;
+    other_desc.para_name = "other_tensor";
+    if (target_type == app::AppDataType::INT32 || target_type == app::AppDataType::INT8) {
+        std::uniform_int_distribution<int32_t> int_dist(-100, 100);
+        other_desc.para_data_f32.clear();
+        for (uint32_t i = 0; i < total; ++i) {
+            other_desc.para_data_f32.push_back(static_cast<float>(int_dist(rng)));
+        }
+    } else {
+        other_desc.para_data_f32.clear();
+        for (uint32_t i = 0; i < total; ++i) {
+            other_desc.para_data_f32.push_back(data_dist(rng));
+        }
+    }
+    req.para_inputs["other_tensor"] = other_desc;
+
+    // 鐢熸垚 alpha锛堥暱搴︿负 W锛?    app::AppTensorDesc alpha_desc;
+    alpha_desc.para_name = "alpha";
+    alpha_desc.para_dtype = target_type;
+    alpha_desc.para_shape = {req.para_dimensions.para_w};
+    if (target_type == app::AppDataType::INT32 || target_type == app::AppDataType::INT8) {
+        std::uniform_int_distribution<int32_t> alpha_int_dist(-5, 5);
+        for (uint32_t i = 0; i < req.para_dimensions.para_w; ++i) {
+            alpha_desc.para_data_f32.push_back(static_cast<float>(alpha_int_dist(rng)));
+        }
+    } else {
+        std::uniform_real_distribution<float> alpha_dist(0.1f, 2.0f);
+        for (uint32_t i = 0; i < req.para_dimensions.para_w; ++i) {
+            alpha_desc.para_data_f32.push_back(alpha_dist(rng));
+        }
+    }
+    req.para_parameters["alpha"] = alpha_desc;
+}
+
+bool SubOp::generate_data(const app::AppOperatorRequest& req, 
+                         std::vector<uint8_t>& input_bin, 
+                         std::vector<uint8_t>& other_bin, 
+                         std::vector<uint8_t>& alpha_bin) {
+    input_bin.clear();
+    other_bin.clear();
+    alpha_bin.clear();
+    
+    auto write_tensor_data = [](std::vector<uint8_t>& bin, const app::AppTensorDesc& tensor) {
+        if (tensor.para_dtype == app::AppDataType::FLOAT32) {
+            for (float v : tensor.para_data_f32) {
+                uint32_t bits; memcpy(&bits, &v, sizeof(float));
+                bin.push_back(bits & 0xFF);
+                bin.push_back((bits >> 8) & 0xFF);
+                bin.push_back((bits >> 16) & 0xFF);
+                bin.push_back((bits >> 24) & 0xFF);
+            }
+        } else if (tensor.para_dtype == app::AppDataType::FLOAT16) {
+            for (float v : tensor.para_data_f32) {
+                uint16_t bits = app::float32_to_float16(v);
+                bin.push_back(bits & 0xFF);
+                bin.push_back((bits >> 8) & 0xFF);
+            }
+        } else if (tensor.para_dtype == app::AppDataType::INT32) {
+            for (float v : tensor.para_data_f32) {
+                uint32_t bits = static_cast<uint32_t>(static_cast<int32_t>(v));
+                bin.push_back(bits & 0xFF);
+                bin.push_back((bits >> 8) & 0xFF);
+                bin.push_back((bits >> 16) & 0xFF);
+                bin.push_back((bits >> 24) & 0xFF);
+            }
+        } else if (tensor.para_dtype == app::AppDataType::INT8) {
+            for (float v : tensor.para_data_f32) {
+                bin.push_back(static_cast<uint8_t>(static_cast<int8_t>(v)));
+            }
+        }
+    };
+    
+    const auto& inputs = req.para_inputs;
+    if (inputs.find("input_tensor") != inputs.end()) {
+        write_tensor_data(input_bin, inputs.at("input_tensor"));
+    }
+    if (inputs.find("other_tensor") != inputs.end()) {
+        write_tensor_data(other_bin, inputs.at("other_tensor"));
+    }
+    
+    const auto& params = req.para_parameters;
+    if (params.find("alpha") != params.end()) {
+        write_tensor_data(alpha_bin, params.at("alpha"));
+    }
+    
+    return true;
+}
+
+std::vector<uint8_t> SubOpInstructions::serialize() const {
+    std::vector<uint8_t> result;
+    auto iq_files = get_iq_files();
+    for (const auto& file : iq_files) {
+        result.insert(result.end(), file.para_data.begin(), file.para_data.end());
+    }
+    return result;
+}
+
+// 鑷姩娉ㄥ唽绠楀瓙
+REGISTER_OP(SubOp);
+
+} // namespace op
+} // namespace aiacc

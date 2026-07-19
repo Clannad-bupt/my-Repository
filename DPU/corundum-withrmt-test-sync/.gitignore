@@ -1,0 +1,32 @@
+*~
+*.lxt
+*.pyc
+*.vvp
+*.kate-swp
+
+.*
+!.gitignore
+
+# Kernel
+*.o
+*.cmd
+*.mod
+*.mod.c
+Module.symvers
+modules.order
+*.ko
+
+# Vivado
+*.jou
+*.log
+*.str
+
+tags
+fpga/ip/
+fpga/mqnic/AU280/fpga_100g/fpga/fpga.runs
+fpga/mqnic/AU280/fpga_100g/fpga/fpga.cache
+fpga/mqnic/AU280/fpga_100g/lib_rmt/netfpga*
+fpga/mqnic/AU280/fpga_100g/fpga/fpga.gen
+fpga/mqnic/AU280/fpga_100g/fpga
+fpga/mqnic/AU50
+

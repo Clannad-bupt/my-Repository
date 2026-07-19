@@ -1,0 +1,16 @@
+GETTING STARTED
+
+First copy openocd/ to host system with Corundum PCIe endpoint runs.
+Then in openocd/ run make to build and run the OpenOCD GDB server.
+
+On (same or other) host cross RISC-V GDB debugger and use
+"target extended-remote <corundum-host-ip>:3333".
+
+make debug to build the application, upload it to the RISC-V via
+OpenOCD GDB server -> PCIe XVC -> JTAG -> VexRiscv -> BRAM, start
+the CPU and break at main().
+
+The RISC-V toolchain can be downloaded prebuilt. See this VexRiscv
+Dockerfile for all VexRiscv related tools.
+
+ https://github.com/likewise/vexriscv-dockerfile

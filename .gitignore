@@ -1,0 +1,57 @@
+# Operating systems and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# Python caches and environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# General build outputs and logs
+build/
+dist/
+out/
+sim_build/
+*.o
+*.obj
+*.elf
+*.log
+*.jou
+*.str
+*.wdb
+*.tmp
+
+# Archives and locally installed toolchains
+*.zip
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+**/sw/local/
+
+# Vivado-generated files and directories
+.Xil/
+*.cache/
+*.gen/
+*.hw/
+*.ip_user_files/
+*.runs/
+*.sim/
+*.dcp
+*.bit
+*.ltx
+*.xsa
+timing_report.txt
+
+# Credentials and private keys
+.env
+.env.*
+*.pem
+*.pfx
+*.key
