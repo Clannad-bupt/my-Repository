@@ -1,0 +1,199 @@
+modules:
+  FPADD:
+    type: compute
+    latency: 4
+    inputs: [DVR-FPADD-S0, DVR-FPADD-S1]
+    outputs: [DR-FPADD-D, DR-FPADD-ST]
+    code_bits: 10
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: SRC_PREC, bits: 1}
+      - {name: DST_PREC, bits: 1}
+      - {name: UPDATE_ST, bits: 1}
+      - {name: SUB, bits: 1}
+      - {name: SMC_ID, bits: 5}
+    parallelism:
+      prec_16bit:
+        lanes: 8
+        formula: "DR_D[x], DR_ST[x] = S0[x] +/- S1[x] (x=0..7)"
+      prec_32bit:
+        lanes: 4
+        formula: "DR_D[x], DR_ST[x] = S0[x] +/- S1[x] (x=0..3)"
+
+  FPMUL:
+    type: compute
+    latency: 4
+    inputs: [DVR-FPMUL-S0, DVR-FPMUL-S1]
+    outputs: [DR-FPMUL-D]
+    code_bits: 8
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: SRC_PREC, bits: 1}
+      - {name: DST_PREC, bits: 1}
+      - {name: SMC_ID, bits: 5}
+    # 核心拆分对齐逻辑
+    parallelism:
+      prec_16bit:
+        lanes: 8
+        formula: "DR_D[x] = S0[x] * S1[x] (x=0..7)"
+      prec_32bit:
+        lanes: 4
+        formula: "DR_D[x] = S0[x] * S1[x] (x=0..3)"
+
+  LOGIC:
+    type: compute
+    latency: 1
+    inputs: [DVR-LOGIC-S0, DVR-LOGIC-S1, DVR-LOGIC-ST]
+    outputs: [DR-LOGIC-D]
+    code_bits: 11
+    code_fields:
+      - {name: VALID, bits: 1, default: 1}
+      - name: OP_TYPE
+        bits: 4
+        default: 0
+        encoding:
+          AND: 0
+          OR: 1
+          XOR: 2
+          NOT: 3
+          COPY: 4
+          SELECT_GT: 5
+          SELECT_EQ: 6
+          SELECT_LS: 7
+          SELECT_GE: 8
+          SELECT_LE: 9
+          SELECT_NE: 10
+      - {name: PRECISION, bits: 1, default: 1}
+      - {name: SMC_ID, bits: 4, default: 0}
+
+  RTOVR:
+    type: router
+    latency: 1
+    inputs: [DVR-RTOVR-SEL]
+    code_bits: 7
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: SEL, bits: 6}
+
+  UR_READ:
+    type: memory_access
+    latency: 1
+    code_bits: 17
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: BANK, bits: 3}
+      - {name: ADDR, bits: 8}
+      - {name: SMC_ID, bits: 5}
+
+  UR_WRITE:
+    type: memory_access
+    latency: 1
+    inputs: [DVR-UR_WRITE-D]
+    code_bits: 33
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: BANK, bits: 3}
+      - {name: ADDR, bits: 8}
+      - {name: wbe, bits: 16}
+      - {name: SMC_ID, bits: 5}
+
+  STB:
+    type: transfer
+    latency: 1
+    code_bits: 7
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: slot_id, bits: 6}
+
+  INTADD:
+    type: compute
+    latency: 1
+    code_bits: 18
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: src0_prec, bits: 2}
+      - {name: src1_prec, bits: 2}
+      - {name: src2_prec, bits: 2}
+      - {name: src0_sign, bits: 1}
+      - {name: src1_sign, bits: 1}
+      - {name: src2_sign, bits: 1}
+      - {name: dst_sign, bits: 1}
+      - {name: update_st, bits: 1}
+      - {name: add_sub, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  FPTOINT:
+    type: compute
+    latency: 1
+    code_bits: 10
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: src_prec, bits: 1}
+      - {name: dst_prec, bits: 1}
+      - {name: src_pos, bits: 1}
+      - {name: dst_pos, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  INTTOFP:
+    type: compute
+    latency: 1
+    code_bits: 10
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: src_prec, bits: 1}
+      - {name: dst_prec, bits: 1}
+      - {name: src_pos, bits: 1}
+      - {name: dst_pos, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  INTTOINT:
+    type: compute
+    latency: 1
+    code_bits: 12
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: src_prec, bits: 1}
+      - {name: dst_prec, bits: 1}
+      - {name: src_sign, bits: 1}
+      - {name: dst_sign, bits: 1}
+      - {name: src_pos, bits: 1}
+      - {name: dst_pos, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  FPTOFP:
+    type: compute
+    latency: 1
+    code_bits: 10
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: src_prec, bits: 1}
+      - {name: dst_prec, bits: 1}
+      - {name: src_pos, bits: 1}
+      - {name: dst_pos, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  INT8toFP16:
+    type: compute
+    latency: 2
+    code_bits: 7
+    code_fields:
+      - {name: vld, bits: 1}
+      - {name: src_sign, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  FP32ADDTREE5TO1:
+    type: compute
+    latency: 4
+    code_bits: 6
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: smc_id_en, bits: 5}
+
+  FP32ADDTREE8TO1:
+    type: compute
+    latency: 3
+    code_bits: 8
+    code_fields:
+      - {name: VALID, bits: 1}
+      - {name: DST_REG, bits: 2}
+      - {name: smc_id_en, bits: 5}

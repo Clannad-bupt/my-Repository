@@ -1,0 +1,22 @@
+hardware_params:
+  PARAM_SMC_NUM:              32     # SMC数量
+  PARAM_SMC_VECTOR_WIDTH:     128    # 向量位宽(bit)
+  PARAM_IQ_DEPTH:             256    # 每个IQ的深度
+  PARAM_OUTSTANDING_INST_NUM: 4      # 最大outstanding指令数
+  PARAM_EMBED_MAX_LEVEL:      6      # 最大嵌套层数
+  PARAM_SMC_AXI_EN:           1      # SMC是否具有AXI接口
+  PARAM_UR_BANK_NUM:          8      # UR Bank数量
+  PARAM_UR_BANK_DEPTH:        256    # 每个Bank的深度
+
+  # --- AIACC V5.0 Unified ISA Spec (41-bit Common Header + N-bit Dynamic CODE) ---
+  ISA_HEADER_BITS: 41
+  ISA_HEADER_FIELDS:
+    VLD:         1   # Bit 40 (MSB)
+    JUMP:        1   # Bit 39
+    EMBED_LOOPS: 3   # Bit 36-38
+    EMBED_END:   6   # Bit 30-35
+    LOOPS:       10  # Bit 20-29
+    COND:        7   # Bit 13-19
+    DLY:         3   # Bit 10-12
+    INC:         4   # Bit 6-9
+    INC_EMBED:   6   # Bit 0-5 (LSB of Header)

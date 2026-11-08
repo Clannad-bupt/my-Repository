@@ -1,0 +1,66 @@
+unit_name: FPTOINT
+latency: 1
+attributes:
+  throughput: 1
+  desc: Generated spec for FPTOINT
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  outputs:
+  - name: D
+    width: 128
+    type: data
+    rtovr_src_id: 8       # RtoVRInputSource.DR_FPTOINT_D
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SRC_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: DST_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: SRC_POS
+  width: 1
+  default: 0
+  encoding:
+    0: LOW
+    1: HIGH
+- field: DST_POS
+  width: 1
+  default: 0
+  encoding:
+    0: LOW
+    1: HIGH
+- field: SMC_ID_EN
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    PREC_16: { element_type: FP16, count: 8, width: 16 }
+    PREC_32: { element_type: FP32, count: 4, width: 32 }
+  
+  execution_modes:
+    - name: FTOI_GENERIC
+      condition: "VALID == 'VALID'"
+      input_source: S0
+      operation:
+        type: CONVERT
+        src_type: FLOAT
+        dst_type: INT
+        src_layout: "get_layout(SRC_PREC)"
+        dst_layout: "get_layout(DST_PREC)"

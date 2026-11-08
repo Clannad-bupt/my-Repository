@@ -1,0 +1,10 @@
+name: "relu_offset"
+formula: "Max(0, x + offset)"
+tensors:
+  x:         { bank: 0, role: "input", offset: 0 }
+  offset:    { bank: 1, role: "param", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y:         { bank: 2, role: "output", offset: 0 }
+test_data:
+  x:      { range: [-2.0, 2.0] }
+  offset: [0.5]

@@ -1,0 +1,76 @@
+unit_name: FP16MUL
+latency: 4
+attributes:
+  throughput: 1
+  desc: 8xFP16 Multiplier
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  outputs:
+  - name: D0
+    width: 128
+    type: data
+    rtovr_src_id: 18
+  - name: D1
+    width: 128
+    type: data
+    rtovr_src_id: 19
+  - name: D2
+    width: 128
+    type: data
+    rtovr_src_id: 20
+  - name: D3
+    width: 128
+    type: data
+    rtovr_src_id: 21
+  - name: D4
+    width: 128
+    type: data
+    rtovr_src_id: 22
+  - name: D5
+    width: 128
+    type: data
+    rtovr_src_id: 23
+  - name: D6
+    width: 128
+    type: data
+    rtovr_src_id: 24
+  - name: D7
+    width: 128
+    type: data
+    rtovr_src_id: 25
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SRC_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: DST_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    FP16: { element_type: FP16, count: 8, width: 16 }
+  
+  execution_modes:
+    - name: FP16MUL_CORE
+      condition: "VALID == 'VALID'"
+      input_source: [S0, S1]
+      layout: FP16
+      operation:
+        type: ARITHMETIC
+        primitive: fp_mul_hw

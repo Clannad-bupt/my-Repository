@@ -1,0 +1,75 @@
+unit_name: LOGIC
+latency: 1
+attributes:
+  throughput: 1
+  desc: Logic Operations (AND, OR, XOR, etc.)
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  - name: ST
+    width: 128
+  outputs:
+  - name: D
+    width: 128
+    type: data
+    rtovr_src_id: 10      # RtoVRInputSource.DR_LOGIC_D
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: OP_TYPE
+  width: 4
+  default: 0
+  encoding:
+    0: AND
+    1: OR
+    2: XOR
+    3: NOT
+    4: COPY
+    5: SELECT_GT
+    6: SELECT_EQ
+    7: SELECT_LS
+    8: LSH_L
+    9: ASH_L
+    10: ROT_L
+    11: LSH_R
+    12: ASH_R
+    13: ROT_R
+    14: CLZ
+    15: CTZ
+- field: PRECISION
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: SMC_ID
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    PREC_16: { element_type: UINT, count: 8, width: 16 }
+    PREC_32: { element_type: UINT, count: 4, width: 32 }
+  
+  execution_modes:
+    - name: LOGIC_CORE
+      condition: "VALID == 'VALID'"
+      input_sources: [S0, S1]
+      layout_ref: "PRECISION"
+      # 这里不再写具体 Python 代码，而是写行为算子名
+      # 模拟器只需维护一个稳定算子库：ops['AND'] = lambda a, b: a & b
+      operation_map:
+        AND: bitwise_and
+        OR: bitwise_or
+        XOR: bitwise_xor
+        SELECT_GT: select_by_st_gt
+        LSH_R: logical_shift_right
+        ASH_R: arithmetic_shift_right
+        CLZ: count_leading_zeros

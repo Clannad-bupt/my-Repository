@@ -1,0 +1,9 @@
+name: "silu_approx"
+# silu_approx using Min/Max: x * Min(1.0, Max(0.0, x / 6.0 + 0.5))
+formula: "x * Min(1.0, Max(0.0, x / 6.0 + 0.5))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-5.0, 5.0] }

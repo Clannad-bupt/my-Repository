@@ -1,0 +1,75 @@
+unit_name: INTTOINT
+latency: 1
+attributes:
+  throughput: 1
+  desc: Generated spec for INTTOINT
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  outputs:
+  - name: D
+    width: 128
+    type: data
+    rtovr_src_id: 7       # RtoVRInputSource.DR_INTTOINT_D
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SRC_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: DST_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: SRC_SIGN
+  width: 1
+  default: 1
+  encoding:
+    0: UNSIGNED
+    1: SIGNED
+- field: DST_SIGN
+  width: 1
+  default: 1
+  encoding:
+    0: UNSIGNED
+    1: SIGNED
+- field: SRC_POS
+  width: 1
+  default: 0
+  encoding:
+    0: LOW
+    1: HIGH
+- field: DST_POS
+  width: 1
+  default: 0
+  encoding:
+    0: LOW
+    1: HIGH
+- field: SMC_ID_EN
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    PREC_16: { element_type: INT, count: 8, width: 16 }
+    PREC_32: { element_type: INT, count: 4, width: 32 }
+  
+  execution_modes:
+    - name: INT_CONV
+      condition: "VALID == 'VALID'"
+      input_source: S
+      operation:
+        type: REINTERPRET
+        logic: "D[dst_idx] = cast(S[src_idx], sign_mode)"

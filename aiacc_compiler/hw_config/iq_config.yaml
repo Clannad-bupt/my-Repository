@@ -1,0 +1,83 @@
+iq_config:
+  IQ_FPADD:
+    module: FPADD
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    EN_DLY: true
+    BITS_DLY: 3
+    BITS_CODE: 10 # VALID(1) + SUB(1) + SRC0_PREC(1) + DST_PREC(1) + UPDATE_ST(1) + ...
+
+  IQ_FPMUL:
+    module: FPMUL
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    EN_DLY: true
+    BITS_DLY: 3
+    BITS_CODE: 8
+
+  IQ_LOGIC:
+    module: LOGIC
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    EN_DLY: true
+    BITS_DLY: 3
+    BITS_CODE: 11 # VALID(1) + OP_TYPE(4) + PRECISION(1) + SMC_ID(5)
+
+  IQ_UR_READ:
+    module: UR_READ
+    count: 4
+    EN_LOOPS: true
+    EN_INC: true
+    BITS_LOOPS: 10
+    BITS_CODE: 17
+
+  IQ_UR_WRITE:
+    module: UR_WRITE
+    count: 4
+    EN_LOOPS: true
+    EN_INC: true
+    BITS_LOOPS: 10
+    BITS_CODE: 33
+
+  IQ_RTOVR:
+    module: RTOVR
+    count: 64
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 7
+
+  IQ_INTADD:
+    module: INTADD
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 18
+
+  IQ_FPTOINT:
+    module: FPTOINT
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 10
+
+  IQ_INTTOFP:
+    module: INTTOFP
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 11 # 修正对齐 inttofp.yaml (1+1+1+1+1+1+5=11)
+
+  IQ_INTTOINT:
+    module: INTTOINT
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 12
+
+  IQ_FPTOFP:
+    module: FPTOFP
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 10
+
+  IQ_INT8toFP16:
+    module: INT8toFP16
+    EN_LOOPS: true
+    BITS_LOOPS: 10
+    BITS_CODE: 7

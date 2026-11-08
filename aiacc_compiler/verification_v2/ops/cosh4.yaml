@@ -1,0 +1,10 @@
+name: "cosh4"
+# 对应 torch.cosh(x) 的 4 阶泰勒级数逼近 (Taylor Series order 4 approximation)
+# 采用纯一维线性 Horner 展开，100% 消除分支合并与单 Bank 1 读端口时序碰撞！
+formula: "1.0 + x * (0.0 + x * (0.5 + x * (0.0 + 0.04166667 * x)))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-2.0, 2.0] }

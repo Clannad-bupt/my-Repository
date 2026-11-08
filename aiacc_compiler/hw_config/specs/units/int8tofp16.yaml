@@ -1,0 +1,59 @@
+unit_name: INT8TOFP16
+latency: 2
+attributes:
+  throughput: 1
+  desc: Int8 to FP16 converter (32xInt8 -> 32xFP16 scattered)
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  outputs:
+  - name: D0
+    width: 128
+    type: data
+    rtovr_src_id: 14
+  - name: D1
+    width: 128
+    type: data
+    rtovr_src_id: 15
+  - name: D2
+    width: 128
+    type: data
+    rtovr_src_id: 16
+  - name: D3
+    width: 128
+    type: data
+    rtovr_src_id: 17
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SRC_SIGN
+  width: 1
+  default: 1
+  encoding:
+    0: UNSIGNED
+    1: SIGNED
+- field: SMC_ID_EN
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    INT8_PACK: { element_type: INT, count: 16, width: 8 } # 128 bit
+    FP16_PACK: { element_type: FP16, count: 8, width: 16 } # 128 bit
+  
+  execution_modes:
+    - name: I8TOF16_CORE
+      condition: "VALID == 'VALID'"
+      input_source: [S0, S1] # 256 bits total = 32 x Int8
+      operation:
+        type: CONVERT
+        src_type: INT8
+        dst_type: FP16
+        logic: "32xInt8 -> 32xFP16 scattered across D0-D3"

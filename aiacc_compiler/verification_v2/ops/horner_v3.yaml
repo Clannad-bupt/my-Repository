@@ -1,0 +1,15 @@
+name: "horner_v3"
+formula: "((c0 * x + c1) * x + c2) * x + c3"
+tensors:
+  x:      { bank: 0, role: "input",  offset: 0 }
+  c0:     { bank: 1, role: "param",  offset: 0 }
+  c1:     { bank: 1, role: "param",  offset: 1 }
+  c2:     { bank: 1, role: "param",  offset: 2 }
+  c3:     { bank: 1, role: "param",  offset: 3 }
+  y:      { bank: 2, role: "output", offset: 0 }
+test_data:
+  x:      { range: [0.1, 1.0] }
+  c0:     [0.1]
+  c1:     [-0.2]
+  c2:     [0.3]
+  c3:     [-0.4]

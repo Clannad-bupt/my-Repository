@@ -1,0 +1,17 @@
+name: "layernorm_step"
+# Formula: (x - mean) * gamma / (var + eps) + beta
+formula: "(x - mean) * gamma * (var + 0.00001)**(-1) + beta"
+tensors:
+  x:         { bank: 0, role: "input", offset: 0 }
+  mean:      { bank: 1, role: "param", offset: 0 }
+  var:       { bank: 1, role: "param", offset: 1 }
+  gamma:     { bank: 3, role: "param", offset: 0 }
+  beta:      { bank: 3, role: "param", offset: 1 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y:         { bank: 2, role: "output", offset: 0 }
+test_data:
+  x:     { range: [-1.0, 1.0] }
+  mean:  [0.0]
+  var:   [1.0]
+  gamma: [1.0]
+  beta:  [0.0]

@@ -1,0 +1,21 @@
+pipeline_delays:
+  UR_READ:             1    # UR读延迟
+  UR_WRITE:            1    # UR写延迟
+  RTOVR:               1    # RtoVR搬运延迟
+  FPADD:               4    # 浮点加法延迟
+  FPMUL:               4    # 浮点乘法延迟
+  INTADD:              1    # 整数加法延迟
+  FP16MUL:             2    # FP16乘法延迟
+  FP32ADDTREE5TO1:     4    # FP32加法树5to1延迟
+  FP32ADDTREE8TO1:     3    # FP32加法树8to1延迟
+  FPtoFP:              1    # 浮点转换延迟
+  INTtoINT:            1    # 整数转换延迟
+  FPtoINT:             1    # 浮点转整数延迟
+  INTtoFP:             1    # 整数转浮点延迟
+  LOGIC:               1    # 逻辑运算延迟
+  SHIFTUP:             1    # 上移延迟
+  SHIFTDN:             1    # 下移延迟
+  INT8toFP16:          1    # INT8转FP16延迟
+  VIN0:                0    # 向量输入流水线寄存器0
+  VIN1:                0    # 向量输入流水线寄存器1
+  VOUT0:               0    # 向量输出流水线寄存器0

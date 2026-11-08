@@ -1,0 +1,81 @@
+rtovr_connectivity:
+  # 消费者端 (Inputs to Crossbar / From Units to RtoVR)
+  # 对应指令中的 SEL 字段
+  consumers_dr:
+    0: INTADD_D
+    1: INTADD_D1
+    2: INTADD_ST
+    3: FPMUL_D
+    4: FPADD_D
+    5: FPADD_ST
+    6: FPTOFP_D
+    7: INTTOINT_D
+    8: FPTOINT_D
+    9: INTTOFP_D
+    10: LOGIC_D
+    11: VIN0_D
+    12: VIN1_D
+    13: VOUT0_D
+    14: INT8TOFP16_D0
+    15: INT8TOFP16_D1
+    16: INT8TOFP16_D2
+    17: INT8TOFP16_D3
+    18: FP16MUL_D0
+    19: FP16MUL_D1
+    20: FP16MUL_D2
+    21: FP16MUL_D3
+    22: FP16MUL_D4
+    23: FP16MUL_D5
+    24: FP16MUL_D6
+    25: FP16MUL_D7
+    26: FP32ADDTREE5TO1_D0
+    27: FP32ADDTREE5TO1_D1
+    28: FP32ADDTREE8TO1_D
+    29: SHIFTUP_D
+    30: UR_READ_0_D
+    31: UR_READ_1_D
+    32: UR_READ_2_D
+    33: UR_READ_3_D
+
+  # 生产者端 (Outputs from Crossbar / From RtoVR to Units)
+  # 对应物理插槽 (Slot 0-38) 与单元输入端口的固定连接
+  producers_dvr:
+    0: INTADD_S0
+    1: INTADD_S1
+    2: INTADD_S2
+    3: FPMUL_S0
+    4: FPMUL_S1
+    5: FPADD_S0
+    6: FPADD_S1
+    7: FPTOFP_S
+    8: INTTOINT_S
+    9: FPTOINT_S
+    10: INTTOFP_S
+    11: LOGIC_S0
+    12: LOGIC_S1
+    13: LOGIC_ST
+    14: VIN0_S
+    15: VIN1_S
+    16: VOUT0_S
+    17: INT8TOFP16_S0
+    18: INT8TOFP16_S1
+    19: FP16MUL_S0
+    20: FP16MUL_S1
+    21: FP16MUL_S2
+    22: FP16MUL_S3
+    23: FP16MUL_S4567
+    24: FP32ADDTREE5TO1_S0
+    25: FP32ADDTREE5TO1_S1
+    26: FP32ADDTREE5TO1_S2
+    27: FP32ADDTREE5TO1_S3
+    28: FP32ADDTREE5TO1_S4
+    29: FP32ADDTREE5TO1_S5
+    30: FP32ADDTREE5TO1_S6
+    31: FP32ADDTREE5TO1_S7
+    32: FP32ADDTREE8TO1_S0
+    33: FP32ADDTREE8TO1_S1
+    34: SHIFTDN_S
+    35: UR_WRITE_0_D
+    36: UR_WRITE_1_D
+    37: UR_WRITE_2_D
+    38: UR_WRITE_3_D

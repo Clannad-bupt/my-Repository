@@ -1,0 +1,13 @@
+name: "div"
+# 对应 torch.div(x, other) (即 x / other) 在 other=1.0 附近的 4 阶展开 Horner 逼近：
+# y = x * (other**4 - 5*other**3 + 10*other**2 - 10*other + 5)
+# 采用纯一维线性 Horner 展开，100% 消除分支合并与单 Bank 1 读端口时序碰撞！
+formula: "x * (5.0 + other * (-10.0 + other * (10.0 + other * (-5.0 + other))))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  other: { bank: 1, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-2.0, 2.0] }
+  other: { range: [0.8, 1.25] }

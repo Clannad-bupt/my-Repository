@@ -1,0 +1,63 @@
+unit_name: FP32ADDTREE5TO1
+latency: 4
+attributes:
+  throughput: 1
+  desc: Cumulative 32-to-8 FP32 Add Tree
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  - name: S2
+    width: 128
+  - name: S3
+    width: 128
+  - name: S4
+    width: 128
+  - name: S5
+    width: 128
+  - name: S6
+    width: 128
+  - name: S7
+    width: 128
+  outputs:
+  - name: D0
+    width: 128
+    type: data
+    rtovr_src_id: 26
+  - name: D1
+    width: 128
+    type: data
+    rtovr_src_id: 27
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: smc_id_en
+  width: 5
+  default: 0
+behavioral_semantics:
+  data_layouts:
+    # 目的寄存器布局：8个 FP32 累加器通道
+    ACC_CHANNEL: { element_type: FP32, count: 8, width: 32 }
+    # 输入交织原始布局：每个通道由 8 个源寄存器的对应 4-bit 组成
+    INPUT_SRC_PLANE: { element_type: NIBBLE, count: 32, width: 4 }
+
+  execution_modes:
+    - name: TREE_ACCUMULATE_5TO1
+      condition: "VALID == 'VALID'"
+      input_source: [S0, S1, S2, S3, S4, S5, S6, S7]
+      # 显式指出：只有在此模式激活时才更新输入锁存
+      latching: True
+      operation:
+        type: REDUCTION
+        # 核心算子引用稳定的 fp32_add_hw
+        primitive: fp32_add_hw
+        # 累加：将输入归约结果加到现有的 D0:D1 状态上
+        cumulative: True
+        # 每个通道归约 4 个重组后的 FP32 元素
+        reduction_per_channel: 4

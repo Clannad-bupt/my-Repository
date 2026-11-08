@@ -1,0 +1,16 @@
+{
+  "sram_bytes": 262144,
+  "num_banks": 4,
+  "dma_align": 32,
+  "dram_bw_GBps": 32,
+  "freq_hz": 1000000000,
+  "macs_per_cycle": 128,
+  "macs_per_cycle_int8": 256,
+  "macs_per_cycle_fp8": 256,
+  "dma_latency_cycles": 200,
+  "vec_rms_alpha": 2,
+  "vec_bw_bytes_per_cycle": 32,
+  "tile_lambda": 1.0,
+  "tile_mu": 8.0,
+  "dtype_default": "f16"
+}

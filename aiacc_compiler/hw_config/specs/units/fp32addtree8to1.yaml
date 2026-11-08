@@ -1,0 +1,30 @@
+unit_name: FP32ADDTREE8TO1
+latency: 4
+attributes:
+  throughput: 1
+  desc: 8-to-1 Reduction FP32 Add Tree (16-bit to 32-bit)
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  outputs:
+  - name: D
+    width: 128
+    type: data
+    rtovr_src_id: 28      # RtoVRInputSource.DR_FP32ADDTREE8TO1_D
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: DST_REG
+  width: 2
+- field: smc_id_en
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式

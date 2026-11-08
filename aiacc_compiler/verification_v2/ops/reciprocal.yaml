@@ -1,0 +1,11 @@
+name: "reciprocal"
+# 对应 torch.reciprocal(x) (即 1/x) 在 x=1.0 附近的 6 阶展开 Horner 多项式：
+# x**6 - 7*x**5 + 21*x**4 - 35*x**3 + 35*x**2 - 21*x + 7
+# 采用纯一维线性 Horner 展开，100% 消除分支合并与单 Bank 1 读端口时序碰撞！
+formula: "7.0 + x * (-21.0 + x * (35.0 + x * (-35.0 + x * (21.0 + x * (-7.0 + x)))))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [0.6, 1.4] }

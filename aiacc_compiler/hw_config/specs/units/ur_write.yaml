@@ -1,0 +1,28 @@
+unit_name: UR_WRITE
+latency: 1
+attributes:
+  throughput: 1
+  desc: Unified Register Write Port
+ports:
+  inputs:
+  - name: DATA
+    width: 128
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: BANK
+  width: 3
+  default: 0
+- field: ADDR
+  width: 8
+  default: 0
+- field: wbe
+  width: 16
+  default: 0xffff
+- field: SMC_ID
+  width: 5
+  default: 0

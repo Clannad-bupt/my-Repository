@@ -1,0 +1,45 @@
+{
+    "unit_name": "FPMUL",
+    "latency": 4,
+    "ports": {
+        "inputs": [
+            {
+                "name": "S0",
+                "width": 128
+            },
+            {
+                "name": "S1",
+                "width": 128
+            }
+        ],
+        "outputs": [
+            {
+                "name": "D",
+                "width": 128
+            }
+        ]
+    },
+    "total_cases": 4,
+    "control_combinations": [
+        {
+            "VALID": "VALID",
+            "SRC_PREC": "PREC_16",
+            "DST_PREC": "PREC_16"
+        },
+        {
+            "VALID": "VALID",
+            "SRC_PREC": "PREC_16",
+            "DST_PREC": "PREC_32"
+        },
+        {
+            "VALID": "VALID",
+            "SRC_PREC": "PREC_32",
+            "DST_PREC": "PREC_16"
+        },
+        {
+            "VALID": "VALID",
+            "SRC_PREC": "PREC_32",
+            "DST_PREC": "PREC_32"
+        }
+    ]
+}

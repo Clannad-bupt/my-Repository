@@ -1,0 +1,1138 @@
+version: '2.4'
+description: AIACC SMC v2.4 Authoritative Hardware Specification (Standardized)
+system_core:
+  system_info:
+    version: v1.2.1
+    description: "SMC System Master Spec - \u5BF9\u9F50\u4EFF\u771F\u5668\u4E0E\u751F\
+      \u6210\u5668\u6E90\u7801\u9A71\u52A8 (v0.3.11)"
+    last_update: '2026-02-10'
+    status: Golden Version - Final Alignment
+  global_constants:
+    UR_BANK_COUNT: 8
+    UR_BANK_DEPTH: 256
+    UR_LINE_WIDTH: 128
+    IQ_HEADER_WIDTH: 41
+    MAX_RTOVR_PORTS: 64
+    __comment_timing__: System Level Timing Constraints (Cycles)
+    UR_READ_LATENCY: 1
+    UR_WRITE_LATENCY: 1
+    RTOVR_LATENCY: 1
+    REGISTER_DELAY: 0
+    IQ_FETCH_LATENCY: 1
+    PULSE_BEHAVIOR: true
+  resource_constraints:
+    read_ports_per_bank: 1
+    write_ports_per_bank: 1
+    total_read_ports: 4
+    total_write_ports: 4
+    max_parallel_iq: 999
+    bus_width: 128
+    unit_instances:
+      FPMUL: 1
+      FPADD: 1
+      INTADD: 1
+      LOGIC: 1
+      FPTOFP: 1
+      FPTOINT: 1
+      INTTOFP: 1
+      INTTOINT: 1
+      INT8TOFP16: 1
+      FP16MUL: 1
+      FP32ADDTREE5TO1: 1
+      FP32ADDTREE8TO1: 1
+      SHIFTUP: 1
+      SHIFTDN: 1
+      RTOVR: 64
+  iq_registry:
+    UR_READ: 30
+    UR_WRITE: 35
+    RTOVR: 100
+    INTADD: 0
+    FPMUL: 3
+    FPADD: 4
+    FPTOFP: 6
+    FPTOINT: 8
+    INTTOFP: 9
+    INTTOINT: 7
+    LOGIC: 10
+    INT8TOFP16: 14
+    FP16MUL: 18
+    FP32ADDTREE5TO1: 26
+    FP32ADDTREE8TO1: 28
+    SHIFTUP: 29
+    SHIFTDN: 34
+    STB: 7
+  iq_header:
+  - field: INC_EMBED
+    width: 6
+  - field: INC
+    width: 4
+  - field: DLY
+    width: 3
+  - field: COND
+    width: 7
+  - field: LOOPS
+    width: 10
+  - field: EMBED_END
+    width: 6
+  - field: EMBED_LOOPS
+    width: 3
+  - field: JUMP
+    width: 1
+  - field: VLD
+    width: 1
+functional_units:
+  LOGIC:
+    unit_name: LOGIC
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Logic Operations (AND, OR, XOR, etc.)
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      - name: ST
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 10
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: OP_TYPE
+      width: 4
+      default: 0
+      encoding:
+        0: AND
+        1: OR
+        2: XOR
+        3: NOT
+        4: COPY
+        5: SELECT_GT
+        6: SELECT_EQ
+        7: SELECT_LS
+        8: LSH_L
+        9: ASH_L
+        10: ROT_L
+        11: LSH_R
+        12: ASH_R
+        13: ROT_R
+        14: CLZ
+        15: CTZ
+    - field: PRECISION
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SMC_ID
+      width: 5
+      default: 0
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: UINT
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: UINT
+          count: 4
+          width: 32
+      execution_modes:
+      - name: LOGIC_CORE
+        condition: VALID == 'VALID'
+        input_sources:
+        - S0
+        - S1
+        layout_ref: PRECISION
+        operation_map:
+          AND: bitwise_and
+          OR: bitwise_or
+          XOR: bitwise_xor
+          SELECT_GT: select_by_st_gt
+          LSH_R: logical_shift_right
+          ASH_R: arithmetic_shift_right
+          CLZ: count_leading_zeros
+  FPMUL:
+    unit_name: FPMUL
+    latency: 4
+    attributes:
+      throughput: 1
+      desc: Floating Point Multiplier
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 3
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SMC_ID
+      width: 5
+      default: 0
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: FP16
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: FP32
+          count: 4
+          width: 32
+      execution_modes:
+      - name: FPMUL_CORE
+        condition: VALID == 'VALID'
+        input_source:
+        - S0
+        - S1
+        layout_ref: SRC_PREC
+        operation:
+          type: ARITHMETIC
+          primitive: fp_mul_hw
+  INT8TOFP16:
+    unit_name: INT8TOFP16
+    latency: 2
+    attributes:
+      throughput: 1
+      desc: Int8 to FP16 converter (32xInt8 -> 32xFP16 scattered)
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D0
+        width: 128
+        type: data
+        rtovr_src_id: 14
+      - name: D1
+        width: 128
+        type: data
+        rtovr_src_id: 15
+      - name: D2
+        width: 128
+        type: data
+        rtovr_src_id: 16
+      - name: D3
+        width: 128
+        type: data
+        rtovr_src_id: 17
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_SIGN
+      width: 1
+      default: 1
+      encoding:
+        0: UNSIGNED
+        1: SIGNED
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        INT8_PACK:
+          element_type: INT
+          count: 16
+          width: 8
+        FP16_PACK:
+          element_type: FP16
+          count: 8
+          width: 16
+      execution_modes:
+      - name: I8TOF16_CORE
+        condition: VALID == 'VALID'
+        input_source:
+        - S0
+        - S1
+        operation:
+          type: CONVERT
+          src_type: INT8
+          dst_type: FP16
+          logic: 32xInt8 -> 32xFP16 scattered across D0-D3
+  FP32ADDTREE8TO1:
+    unit_name: FP32ADDTREE8TO1
+    latency: 4
+    attributes:
+      throughput: 1
+      desc: 8-to-1 Reduction FP32 Add Tree (16-bit to 32-bit)
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 28
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: DST_REG
+      width: 2
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+  INTADD:
+    unit_name: INTADD
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Integer Adder (32-bit/4-bit Mixed)
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      - name: S2
+        width: 128
+      outputs:
+      - name: D0
+        width: 128
+        type: data
+        rtovr_src_id: 0
+      - name: D1
+        width: 128
+        type: data
+        rtovr_src_id: 1
+      - name: ST
+        width: 128
+        type: status
+        rtovr_src_id: 2
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC0_PREC
+      width: 2
+      default: 3
+      encoding:
+        0: INT4
+        1: INT8
+        2: INT16
+        3: INT32
+    - field: SRC1_PREC
+      width: 2
+      default: 3
+      encoding:
+        0: INT4
+        1: INT8
+        2: INT16
+        3: INT32
+    - field: SRC2_PREC
+      width: 2
+      default: 3
+      encoding:
+        0: INT4
+        1: INT8
+        2: INT16
+        3: INT32
+    - field: SRC0_SIGN
+      width: 1
+    - field: SRC1_SIGN
+      width: 1
+    - field: SRC2_SIGN
+      width: 1
+    - field: DST_SIGN
+      width: 1
+      default: 1
+      encoding:
+        0: UNSIGNED
+        1: SIGNED
+    - field: UPDATE_ST
+      width: 1
+      default: 1
+      encoding:
+        0: 'NO'
+        1: 'YES'
+    - field: ADD_SUB
+      width: 1
+      default: 0
+      encoding:
+        0: ADD
+        1: SUB
+    - field: SMC_ID
+      width: 5
+      default: 0
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        INT4:
+          element_type: INT
+          count: 32
+          width: 4
+        INT8:
+          element_type: INT
+          count: 16
+          width: 8
+        INT16:
+          element_type: INT
+          count: 8
+          width: 16
+        INT32:
+          element_type: INT
+          count: 4
+          width: 32
+      execution_modes:
+      - name: MODE_4BIT_CONCAT
+        condition: SRC0_PREC == 'INT4'
+        layout: INT4
+        inputs:
+          A:
+            sources:
+            - S0
+            - S1
+            transformation: CONCAT_4_TO_8
+          B:
+            source: S2
+            transformation: NONE
+        operation:
+          type: ARITHMETIC
+          formula: B - A if ADD_SUB == 'SUB' else B + A
+          saturation:
+            width: 8
+            signed_ref: DST_SIGN
+        outputs:
+          D0:
+            source: result
+            slice:
+            - 0
+            - 4
+          D1:
+            source: result
+            slice:
+            - 4
+            - 4
+      - name: MODE_32BIT_STANDARD
+        condition: SRC0_PREC == 'INT32'
+        layout: INT32
+        inputs:
+          A:
+            source: S0
+          B:
+            source: S1
+        operation:
+          type: ARITHMETIC
+          formula: A - B if ADD_SUB == 'SUB' else A + B
+          saturation:
+            width: 32
+            signed_ref: DST_SIGN
+        side_effects:
+          ST:
+            type: COMPARISON
+            condition: UPDATE_ST == 'YES'
+  SHIFTUP:
+    unit_name: SHIFTUP
+    latency: 0
+    attributes:
+      throughput: 1
+      desc: Generated spec for SHIFTUP
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 29
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: MODE
+      width: 4
+    - field: AMOUNT
+      width: 8
+    - field: SRC_PREC
+      width: 2
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: UPDATE_ST
+      width: 1
+      default: 1
+      encoding:
+        0: 'NO'
+        1: 'YES'
+  INTTOFP:
+    unit_name: INTTOFP
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Generated spec for INTTOFP
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 9
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SRC_SIGN
+      width: 1
+      default: 1
+      encoding:
+        0: UNSIGNED
+        1: SIGNED
+    - field: SRC_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    - field: DST_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: INT
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: INT
+          count: 4
+          width: 32
+      execution_modes:
+      - name: ITOF_GENERIC
+        condition: VALID == 'VALID'
+        input_source: S0
+        operation:
+          type: CONVERT
+          src_type: INT
+          dst_type: FLOAT
+          src_sign: SRC_SIGN
+          src_layout: get_layout(SRC_PREC)
+          dst_layout: get_layout(DST_PREC)
+  FP32ADDTREE5TO1:
+    unit_name: FP32ADDTREE5TO1
+    latency: 4
+    attributes:
+      throughput: 1
+      desc: Cumulative 32-to-8 FP32 Add Tree
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      - name: S2
+        width: 128
+      - name: S3
+        width: 128
+      - name: S4
+        width: 128
+      - name: S5
+        width: 128
+      - name: S6
+        width: 128
+      - name: S7
+        width: 128
+      outputs:
+      - name: D0
+        width: 128
+        type: data
+        rtovr_src_id: 26
+      - name: D1
+        width: 128
+        type: data
+        rtovr_src_id: 27
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    behavioral_semantics:
+      data_layouts:
+        ACC_CHANNEL:
+          element_type: FP32
+          count: 8
+          width: 32
+        INPUT_SRC_PLANE:
+          element_type: NIBBLE
+          count: 32
+          width: 4
+      execution_modes:
+      - name: TREE_ACCUMULATE_5TO1
+        condition: VALID == 'VALID'
+        input_source:
+        - S0
+        - S1
+        - S2
+        - S3
+        - S4
+        - S5
+        - S6
+        - S7
+        latching: true
+        operation:
+          type: REDUCTION
+          primitive: fp32_add_hw
+          cumulative: true
+          reduction_per_channel: 4
+  FP16MUL:
+    unit_name: FP16MUL
+    latency: 4
+    attributes:
+      throughput: 1
+      desc: 8xFP16 Multiplier
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D0
+        width: 128
+        type: data
+        rtovr_src_id: 18
+      - name: D1
+        width: 128
+        type: data
+        rtovr_src_id: 19
+      - name: D2
+        width: 128
+        type: data
+        rtovr_src_id: 20
+      - name: D3
+        width: 128
+        type: data
+        rtovr_src_id: 21
+      - name: D4
+        width: 128
+        type: data
+        rtovr_src_id: 22
+      - name: D5
+        width: 128
+        type: data
+        rtovr_src_id: 23
+      - name: D6
+        width: 128
+        type: data
+        rtovr_src_id: 24
+      - name: D7
+        width: 128
+        type: data
+        rtovr_src_id: 25
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SMC_ID
+      width: 5
+      default: 0
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        FP16:
+          element_type: FP16
+          count: 8
+          width: 16
+      execution_modes:
+      - name: FP16MUL_CORE
+        condition: VALID == 'VALID'
+        input_source:
+        - S0
+        - S1
+        layout: FP16
+        operation:
+          type: ARITHMETIC
+          primitive: fp_mul_hw
+  SHIFTDN:
+    unit_name: SHIFTDN
+    latency: 0
+    attributes:
+      throughput: 1
+      desc: Generated spec for SHIFTDN
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: MODE
+      width: 4
+    - field: AMOUNT
+      width: 8
+    - field: UPDATE_ST
+      width: 1
+      default: 1
+      encoding:
+        0: 'NO'
+        1: 'YES'
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+  UR_WRITE:
+    unit_name: UR_WRITE
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Unified Register Write Port
+    ports:
+      inputs:
+      - name: DATA
+        width: 128
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: BANK
+      width: 3
+      default: 0
+    - field: ADDR
+      width: 8
+      default: 0
+    - field: wbe
+      width: 16
+      default: 65535
+    - field: SMC_ID
+      width: 5
+      default: 0
+  RTOVR:
+    unit_name: RTOVR
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Register to Vector Register Routing
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SEL
+      width: 6
+      default: 0
+  FPTOFP:
+    unit_name: FPTOFP
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Generated spec for FPTOFP
+    ports:
+      inputs:
+      - name: S
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 6
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SRC_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    - field: DST_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: FP16
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: FP32
+          count: 4
+          width: 32
+      execution_modes:
+      - name: CONV_GENERIC
+        condition: VALID == 'VALID'
+        input_source: S
+        operation:
+          type: CAST
+          src_layout: get_layout(SRC_PREC)
+          dst_layout: get_layout(DST_PREC)
+          src_slice: 'SRC_POS == ''HIGH'' ? {F16: [4,8], F32: [2,4]} : {F16: [0,4],
+            F32: [0,2]}'
+          dst_slice: 'DST_POS == ''HIGH'' ? {F16: [4,8], F32: [2,4]} : {F16: [0,4],
+            F32: [0,2]}'
+          logic: D[dst_idx] = cast(S[src_idx], dst_type)
+  FPADD:
+    unit_name: FPADD
+    latency: 4
+    attributes:
+      throughput: 1
+      desc: Floating Point Adder
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 4
+      - name: ST
+        width: 128
+        type: status
+        rtovr_src_id: 5
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: UPDATE_ST
+      width: 1
+      default: 1
+      encoding:
+        0: 'NO'
+        1: 'YES'
+    - field: SUB
+      width: 1
+      default: 0
+      encoding:
+        0: ADD
+        1: SUB
+    - field: SMC_ID
+      width: 5
+      default: 0
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: FP16
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: FP32
+          count: 4
+          width: 32
+      execution_modes:
+      - name: FPADD_CORE
+        condition: VALID == 'VALID'
+        input_source:
+        - S0
+        - S1
+        layout_ref: SRC_PREC
+        operation:
+          type: ARITHMETIC
+          primitive: fp_add_hw
+          status_update:
+            field: ST
+            condition: UPDATE_ST == 'YES'
+  UR_READ:
+    unit_name: UR_READ
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Unified Register Read Port
+    ports:
+      outputs:
+      - name: DATA
+        width: 128
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: BANK
+      width: 3
+      default: 0
+    - field: ADDR
+      width: 8
+      default: 0
+    - field: SMC_ID
+      width: 5
+      default: 0
+  INTTOINT:
+    unit_name: INTTOINT
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Generated spec for INTTOINT
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 7
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SRC_SIGN
+      width: 1
+      default: 1
+      encoding:
+        0: UNSIGNED
+        1: SIGNED
+    - field: DST_SIGN
+      width: 1
+      default: 1
+      encoding:
+        0: UNSIGNED
+        1: SIGNED
+    - field: SRC_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    - field: DST_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: INT
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: INT
+          count: 4
+          width: 32
+      execution_modes:
+      - name: INT_CONV
+        condition: VALID == 'VALID'
+        input_source: S
+        operation:
+          type: REINTERPRET
+          logic: D[dst_idx] = cast(S[src_idx], sign_mode)
+  FPTOINT:
+    unit_name: FPTOINT
+    latency: 1
+    attributes:
+      throughput: 1
+      desc: Generated spec for FPTOINT
+    ports:
+      inputs:
+      - name: S0
+        width: 128
+      - name: S1
+        width: 128
+      outputs:
+      - name: D
+        width: 128
+        type: data
+        rtovr_src_id: 8
+    micro_instructions:
+    - field: VALID
+      width: 1
+      default: 0
+      encoding:
+        0: INVALID
+        1: VALID
+    - field: SRC_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: DST_PREC
+      width: 1
+      default: 1
+      encoding:
+        0: PREC_16
+        1: PREC_32
+    - field: SRC_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    - field: DST_POS
+      width: 1
+      default: 0
+      encoding:
+        0: LOW
+        1: HIGH
+    behavioral_semantics:
+      latching: pre_load_on_valid_or_nonzero
+      data_layouts:
+        PREC_16:
+          element_type: FP16
+          count: 8
+          width: 16
+        PREC_32:
+          element_type: FP32
+          count: 4
+          width: 32
+      execution_modes:
+      - name: FTOI_GENERIC
+        condition: VALID == 'VALID'
+        input_source: S0
+        operation:
+          type: CONVERT
+          src_type: FLOAT
+          dst_type: INT
+          src_layout: get_layout(SRC_PREC)
+          dst_layout: get_layout(DST_PREC)

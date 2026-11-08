@@ -1,0 +1,15 @@
+unit_name: RTOVR
+latency: 1
+attributes:
+  throughput: 1
+  desc: Register to Vector Register Routing
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SEL
+  width: 6
+  default: 0

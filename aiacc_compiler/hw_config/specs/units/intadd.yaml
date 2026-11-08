@@ -1,0 +1,119 @@
+unit_name: INTADD
+latency: 1
+attributes:
+  throughput: 1
+  desc: Integer Adder (32-bit/4-bit Mixed)
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  - name: S2
+    width: 128
+  outputs:
+  - name: D0
+    width: 128
+    type: data
+    rtovr_src_id: 0       # RtoVRInputSource.DR_INTADD_D0
+  - name: D1
+    width: 128
+    type: data
+    rtovr_src_id: 1       # RtoVRInputSource.DR_INTADD_D1
+  - name: ST
+    width: 128
+    type: status
+    rtovr_src_id: 2       # RtoVRInputSource.DR_INTADD_ST
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SRC0_PREC
+  width: 2
+  default: 3
+  encoding:
+    0: INT4
+    1: INT8
+    2: INT16
+    3: INT32
+- field: SRC1_PREC
+  width: 2
+  default: 3
+  encoding:
+    0: INT4
+    1: INT8
+    2: INT16
+    3: INT32
+- field: SRC2_PREC
+  width: 2
+  default: 3
+  encoding:
+    0: INT4
+    1: INT8
+    2: INT16
+    3: INT32
+- field: SRC0_SIGN
+  width: 1
+- field: SRC1_SIGN
+  width: 1
+- field: SRC2_SIGN
+  width: 1
+- field: DST_SIGN
+  width: 1
+  default: 1
+  encoding:
+    0: UNSIGNED
+    1: SIGNED
+- field: UPDATE_ST
+  width: 1
+  default: 1
+  encoding:
+    0: 'NO'
+    1: 'YES'
+- field: ADD_SUB
+  width: 1
+  default: 0
+  encoding:
+    0: ADD
+    1: SUB
+- field: SMC_ID
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    INT4: { element_type: INT, count: 32, width: 4 }
+    INT8: { element_type: INT, count: 16, width: 8 }
+    INT16: { element_type: INT, count: 8, width: 16 }
+    INT32: { element_type: INT, count: 4, width: 32 }
+  
+  execution_modes:
+    - name: MODE_4BIT_CONCAT
+      condition: "SRC0_PREC == 'INT4'"
+      layout: INT4
+      inputs: 
+        A: { sources: [S0, S1], transformation: CONCAT_4_TO_8 }
+        B: { source: S2, transformation: NONE }
+      operation:
+        type: ARITHMETIC
+        formula: "B - A if ADD_SUB == 'SUB' else B + A"
+        saturation: { width: 8, signed_ref: DST_SIGN }
+      outputs:
+        D0: { source: result, slice: [0, 4] } # 低 4 bit
+        D1: { source: result, slice: [4, 4] } # 高 4 bit
+    
+    - name: MODE_32BIT_STANDARD
+      condition: "SRC0_PREC == 'INT32'"
+      layout: INT32
+      inputs:
+        A: { source: S0 }
+        B: { source: S1 }
+      operation:
+        type: ARITHMETIC
+        formula: "A - B if ADD_SUB == 'SUB' else A + B"
+        saturation: { width: 32, signed_ref: DST_SIGN }
+      side_effects:
+        ST: { type: COMPARISON, condition: "UPDATE_ST == 'YES'" }

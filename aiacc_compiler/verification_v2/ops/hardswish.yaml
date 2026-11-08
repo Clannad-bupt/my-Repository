@@ -1,0 +1,9 @@
+name: "hardswish"
+# hardswish: 0.0 if x < -3.0 else (x if x > 3.0 else x * (x + 3) / 6.0)
+formula: "Piecewise((0.0, x < -3.0), (x, x > 3.0), (x * (x + 3.0) / 6.0, True))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: [7, 6], role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-5.0, 5.0] }

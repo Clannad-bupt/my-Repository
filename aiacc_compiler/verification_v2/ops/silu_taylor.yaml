@@ -1,0 +1,9 @@
+name: "silu_taylor"
+# Horner/Taylor form of SiLU: x * (0.5 + x * (0.25 + x * (0.0 - 0.0208333 * x)))
+formula: "x * (0.5 + x * (0.25 + x * (0.0 - 0.0208333 * x)))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-2.0, 2.0] }

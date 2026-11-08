@@ -1,0 +1,10 @@
+name: "mul"
+formula: "x * other"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  other: { bank: 1, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-10.0, 10.0] }
+  other: { range: [-5.0, 15.0] }

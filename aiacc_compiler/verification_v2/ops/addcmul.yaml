@@ -1,0 +1,16 @@
+name: "addcmul"
+# 对应 torch.addcmul(input, tensor1, tensor2, value=1) -> out = input + value * tensor1 * tensor2
+formula: "x + value * t1 * t2"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  t1: { bank: 1, role: "input", offset: 0 }
+  t2: { bank: 2, role: "input", offset: 0 }
+  value: { bank: 3, role: "param", offset: 0 } # 标量系数
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 4, role: "output", offset: 0 }
+test_data:
+  x: { range: [-1.0, 1.0] }
+
+  t1: { range: [-2.0, 2.0] }
+  t2: { range: [0.0, 5.0] }
+  value: [0.5]

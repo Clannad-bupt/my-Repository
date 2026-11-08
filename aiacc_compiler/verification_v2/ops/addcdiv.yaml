@@ -1,0 +1,16 @@
+name: "addcdiv"
+# 对应 torch.addcdiv(x, t1, t2, value) (即 x + value * t1 / t2)
+# 采用 4 阶 Horner 除法展开，每个输入与输出变量各自独占一个 Bank，完全避免任何 Bank 冲突！
+formula: "x + value * t1 * (5.0 + t2 * (-10.0 + t2 * (10.0 + t2 * (-5.0 + t2))))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  t1: { bank: 1, role: "input", offset: 0 }
+  t2: { bank: 2, role: "input", offset: 0 }
+  value: { bank: 3, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 4, role: "output", offset: 0 }
+test_data:
+  x: { range: [-2.0, 2.0] }
+  t1: { range: [-1.0, 1.0] }
+  t2: { range: [0.8, 1.25] }
+  value: { range: [0.5, 1.5] }

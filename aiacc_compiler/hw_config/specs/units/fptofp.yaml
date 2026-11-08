@@ -1,0 +1,65 @@
+unit_name: FPTOFP
+latency: 1
+attributes:
+  throughput: 1
+  desc: Generated spec for FPTOFP
+ports:
+  inputs:
+  - name: S
+    width: 128
+  outputs:
+  - name: D
+    width: 128
+    type: data
+    rtovr_src_id: 6       # RtoVRInputSource.DR_FPTOFP_D
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: SRC_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: DST_PREC
+  width: 1
+  default: 1
+  encoding:
+    0: PREC_16
+    1: PREC_32
+- field: SRC_POS
+  width: 1
+  default: 0
+  encoding:
+    0: LOW
+    1: HIGH
+- field: DST_POS
+  width: 1
+  default: 0
+  encoding:
+    0: LOW
+    1: HIGH
+- field: SMC_ID_EN
+  width: 5
+  default: 0
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式
+  data_layouts:
+    PREC_16: { element_type: FP16, count: 8, width: 16 }
+    PREC_32: { element_type: FP32, count: 4, width: 32 }
+  
+  execution_modes:
+    - name: CONV_GENERIC
+      condition: "VALID == 'VALID'"
+      input_source: S
+      operation:
+        type: CAST
+        src_layout: "get_layout(SRC_PREC)"
+        dst_layout: "get_layout(DST_PREC)"
+        src_slice: "SRC_POS == 'HIGH' ? {F16: [4,8], F32: [2,4]} : {F16: [0,4], F32: [0,2]}"
+        dst_slice: "DST_POS == 'HIGH' ? {F16: [4,8], F32: [2,4]} : {F16: [0,4], F32: [0,2]}"
+        logic: "D[dst_idx] = cast(S[src_idx], dst_type)"

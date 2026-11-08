@@ -1,0 +1,33 @@
+unit_name: SHIFTDN
+latency: 0
+attributes:
+  throughput: 1
+  desc: Generated spec for SHIFTDN
+ports:
+  inputs:
+  - name: S0
+    width: 128
+  - name: S1
+    width: 128
+  outputs:
+  - name: D
+    width: 128
+micro_instructions:
+- field: VALID
+  width: 1
+  default: 0
+  encoding:
+    0: INVALID
+    1: VALID
+- field: MODE
+  width: 4
+- field: AMOUNT
+  width: 8
+- field: UPDATE_ST
+  width: 1
+  default: 1
+  encoding:
+    0: 'NO'
+    1: 'YES'
+behavioral_semantics:
+  latching: pre_load_on_valid_or_nonzero # 支持“数据先到、指令后发”模式

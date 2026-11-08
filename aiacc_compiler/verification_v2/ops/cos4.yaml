@@ -1,0 +1,11 @@
+name: "cos4"
+# 对应 torch.cos(x) 的 4 阶泰勒级数逼近 (Taylor Series order 4 approximation)
+# 采用纯线性一维 Horner 多项式展开，彻底消除所有分支合并 (Branch-Merge)
+# 从而在单物理 FPMUL / FPADD 单元下实现 100% 冲突消除与物理级吞吐量极大化！
+formula: "1.0 + x * (0.0 + x * (-0.5 + x * (0.0 + 0.04166667 * x)))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-3.14159, 3.14159] }

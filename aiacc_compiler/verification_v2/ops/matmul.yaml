@@ -1,0 +1,14 @@
+name: "matmul"
+formula: "a0*b0 + a1*b1 + a2*b2 + a3*b3"
+tensors:
+  a0: { bank: 0, offset: 0, role: "input", precision: "fp32", stride: 4 }
+  a1: { bank: 0, offset: 1, role: "input", precision: "fp32", stride: 4 }
+  a2: { bank: 0, offset: 2, role: "input", precision: "fp32", stride: 4 }
+  a3: { bank: 0, offset: 3, role: "input", precision: "fp32", stride: 4 }
+
+  b0: { bank: 1, offset: 0, role: "input", precision: "fp32", stride: 4 }
+  b1: { bank: 1, offset: 1, role: "input", precision: "fp32", stride: 4 }
+  b2: { bank: 1, offset: 2, role: "input", precision: "fp32", stride: 4 }
+  b3: { bank: 1, offset: 3, role: "input", precision: "fp32", stride: 4 }
+
+  y: { bank: 5, offset: 0, role: "output", precision: "fp32" }

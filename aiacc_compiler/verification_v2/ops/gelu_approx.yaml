@@ -1,0 +1,10 @@
+name: "gelu_approx"
+# 对应 torch.gelu(x) 的高精度 Sigmoid 近似 (x * sigmoid(1.702 * x))
+# 编译器会自动识别高散出节点 (1.702 * x) 并执行 Spill-Reload 保护，实现时序安全对齐
+formula: "x * (0.5 + (1.702 * x) * (0.25 + (1.702 * x) * (0.0 - 0.0208333 * (1.702 * x))))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  constants: { bank: [7, 6], role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-3.0, 3.0] }

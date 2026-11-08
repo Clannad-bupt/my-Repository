@@ -1,0 +1,13 @@
+name: "clip"
+# 对应 torch.clamp(input, min, max)
+formula: "Piecewise((min_val, x < min_val), (max_val, x > max_val), (x, True))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  min_val: { bank: 1, role: "param", offset: 0 }
+  max_val: { bank: 2, role: "param", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 3, role: "output", offset: 0 }
+test_data:
+  x: { range: [-10.0, 10.0] }
+  min_val: [-2.0]
+  max_val: [5.0]

@@ -1,0 +1,13 @@
+name: "add"
+# 对应 torch.add(input, other, alpha=1) -> out = x + alpha * other
+formula: "x + alpha * other"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  other: { bank: 1, role: "input", offset: 0 }
+  alpha: { bank: 3, role: "param", offset: 0 } # 标量系数
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-10.0, 10.0] }
+  other: { range: [-5.0, 15.0] }
+  alpha: [2.5]

@@ -1,0 +1,89 @@
+system_info:
+  version: v1.2.1
+  description: "SMC System Master Spec - \u5BF9\u9F50\u4EFF\u771F\u5668\u4E0E\u751F\
+    \u6210\u5668\u6E90\u7801\u9A71\u52A8 (v0.3.11)"
+  last_update: '2026-02-10'
+  status: Golden Version - Final Alignment
+global_constants:
+  UR_BANK_COUNT: 8
+  UR_BANK_DEPTH: 256
+  UR_LINE_WIDTH: 128
+  IQ_HEADER_WIDTH: 41
+  MAX_RTOVR_PORTS: 64
+  __comment_timing__: System Level Timing Constraints (Cycles)
+  UR_READ_LATENCY: 1
+  UR_WRITE_LATENCY: 1
+  RTOVR_LATENCY: 1
+  REGISTER_DELAY: 0
+  IQ_FETCH_LATENCY: 1
+  PULSE_BEHAVIOR: true
+resource_constraints:
+  read_ports_per_bank: 1
+  write_ports_per_bank: 1
+  total_read_ports: 4
+  total_write_ports: 4
+  max_parallel_iq: 999
+  bus_width: 128
+  # 🚀 物理对齐：显式定义计算单元实例数量
+  unit_instances:
+    # 基础计算流
+    FPMUL: 1
+    FPADD: 1
+    INTADD: 1
+    LOGIC: 1
+    # 路由/数据交换单元
+    RTOVR: 64
+    # 转换单元
+    FPTOFP: 1
+    FPTOINT: 1
+    INTTOFP: 1
+    INTTOINT: 1
+    # 打包/特殊算子
+    INT8TOFP16: 1
+    FP16MUL: 1
+    # 累加树
+    FP32ADDTREE5TO1: 1
+    FP32ADDTREE8TO1: 1
+    # 位移操作
+    SHIFTUP: 1
+    SHIFTDN: 1
+
+iq_registry:
+  UR_READ: 30
+  UR_WRITE: 35
+  RTOVR: 100
+  INTADD: 0
+  FPMUL: 3
+  FPADD: 4
+  FPTOFP: 6
+  FPTOINT: 8
+  INTTOFP: 9
+  INTTOINT: 7
+  LOGIC: 10
+  INT8TOFP16: 14
+  FP16MUL: 18
+  FP32ADDTREE5TO1: 26
+  FP32ADDTREE8TO1: 28
+  SHIFTUP: 29
+  SHIFTDN: 34
+  STB: 7
+
+iq_header:
+  - field: INC_EMBED
+    width: 6
+  - field: INC
+    width: 4
+  - field: DLY
+    width: 3
+  - field: COND
+    width: 7
+  - field: LOOPS
+    width: 10
+  - field: EMBED_END
+    width: 6
+  - field: EMBED_LOOPS
+    width: 3
+  - field: JUMP
+    width: 1
+  - field: VLD
+    width: 1

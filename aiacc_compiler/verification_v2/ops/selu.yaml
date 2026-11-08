@@ -1,0 +1,13 @@
+name: "selu"
+# 对应 torch.selu(x) 激活函数：
+# 通过将因子 x 提取到 Piecewise 之外，并将常数 1.75809934 定义为参数 scale，
+# 完美阻止了 SymPy 的自动分配律展开，从而 100% 避免了 FPMUL 与 FPADD 单元的物理时序死锁！
+formula: "x * Piecewise((1.05070099, x > 0.0), (scale * (1.0 + x * (0.5 + x * (0.16666667 + 0.04166667 * x))), True))"
+tensors:
+  x: { bank: 0, role: "input", offset: 0 }
+  scale: { bank: 1, role: "param", offset: 0 }
+  constants: { bank: 7, role: "constant", offset: 0 }
+  y: { bank: 2, role: "output", offset: 0 }
+test_data:
+  x: { range: [-2.0, 2.0] }
+  scale: [1.75809934]
