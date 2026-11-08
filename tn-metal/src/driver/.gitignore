@@ -1,0 +1,13 @@
+# kbuild artifacts
+*.o
+*.ko
+*.mod
+*.mod.c
+.*.cmd
+Module.symvers
+modules.order
+.tmp_versions/
+
+# mkdeb staging/output
+deb/lpu-kmod-*/
+deb/*.deb

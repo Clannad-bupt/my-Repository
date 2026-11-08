@@ -1,0 +1,18 @@
+Package: lpu-kmod
+Version: @VERSION@
+Section: kernel
+Priority: optional
+Architecture: @ARCH@
+Maintainer: ThinkNative verification <verify@thinknative.invalid>
+Description: ThinkNative LPU AI accelerator kernel module (thin PCIe driver)
+ Thin out-of-tree driver for the ThinkNative LPU AI accelerator: exposes
+ the BAR0/BAR1 windows (write-combine mmap) and coherent host-memory
+ allocations (LPU_IOCTL_GET_INFO / HOST_ALLOC / HOST_FREE) to the
+ userspace runtime. No scheduler semantics in kernel space; completion
+ is handled by CQ polling per LPU-SCHED-SPEC.md (QEMU verification tree).
+ .
+ Built against kernel @KVER@. After installing, load with:
+   depmod -a @KVER@ && modprobe lpu
+ or directly:
+   insmod /lib/modules/@KVER@/updates/lpu.ko
+ Device nodes appear as /dev/lpu0, /dev/lpu1, ... (misc devices).

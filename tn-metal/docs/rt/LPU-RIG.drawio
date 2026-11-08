@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mxfile host="drawio" version="26.0.0">
+  <diagram id="rig1" name="qemu-rig-components">
+    <mxGraphModel dx="1400" dy="880" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1320" pageHeight="880" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="tt" value="ThinkNative 双 QEMU 验证 rig —— QEMU 组件总览（M5 形态）" style="text;html=1;align=left;verticalAlign=middle;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="15" width="820" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="vm0" value="x86 QEMU —— vm.sh run（q35 · KVM）&#xa;Ubuntu 24.04 VM（独立 disk.qcow2）" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=13;fontStyle=1;fillColor=#e1d5e7;strokeColor=#9673a6;" vertex="1" parent="1">
+          <mxGeometry x="40" y="60" width="360" height="400" as="geometry" />
+        </mxCell>
+        <mxCell id="vm1" value="test_vecadd_dev / 上层应用（tnrt）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="vm0">
+          <mxGeometry x="30" y="70" width="300" height="40" as="geometry" />
+        </mxCell>
+        <mxCell id="vm2" value="liblpu_rt.so —— UMD 运行时&#xa;sim / device 双后端；host 扮演 ld.so&#xa;（算子 DSO 重定位全在加载期完成）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="vm0">
+          <mxGeometry x="30" y="135" width="300" height="60" as="geometry" />
+        </mxCell>
+        <mxCell id="vm3" value="lpu.ko —— KMD 驱动&#xa;misc 设备 /dev/lpu0（0600，root 跑）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="vm0">
+          <mxGeometry x="30" y="220" width="300" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="vm4" value="vfio-user-pci 客户端设备（q35 PCIe）&#xa;BAR0 4K 寄存器 + BAR1 8G DRAM 窗口&#xa;MMIO → EPT violation → KVM 仿真 → socket" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="vm0">
+          <mxGeometry x="30" y="300" width="300" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="ap0" value="卡侧 QEMU · ap 实例 —— card-fg.sh&#xa;-M tn-card · -smp 4 · fw @0x80000000 · 拥有 EP 模型 + socket 服务端" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=13;fontStyle=1;fillColor=#ffe6cc;strokeColor=#d79b00;" vertex="1" parent="1">
+          <mxGeometry x="620" y="60" width="640" height="280" as="geometry" />
+        </mxCell>
+        <mxCell id="ap1" value="x-vfio-user-server&#xa;UNIX socket 服务端（build/accel.sock）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="ap0">
+          <mxGeometry x="30" y="55" width="280" height="55" as="geometry" />
+        </mxCell>
+        <mxCell id="ap2" value="tn-accel-card EP 设备模型&#xa;BAR0 寄存器块（IDENT/CTRL/&#xa;Q_CTX/CQ_WP/RP…）&#xa;outbound 窗口 0x92000000（256M）" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="ap0">
+          <mxGeometry x="30" y="135" width="280" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="ap3" value="ap fw 调度固件（4×C906）&#xa;core0：sched_ring_poll 门铃 →&#xa;sched_dispatch_kernel 逐 block×role&#xa;派发；worker×3（zsbl 唤醒协议）&#xa;core_reap 收割 → CQ KERNEL_DONE" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="ap0">
+          <mxGeometry x="340" y="55" width="280" height="175" as="geometry" />
+        </mxCell>
+        <mxCell id="sh1" value="tn-dram.bin —— 8G DRAM 模型&#xa;/dev/shm · memory-backend-file share=on&#xa;0x80000000 fw 区（ap 4M / scalar 4M）&#xa;0x81000000 host arena 16M（CQ/RP/EVT/ring）&#xa;0x82000000 算子模块区 + Malloc 池" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+          <mxGeometry x="650" y="380" width="360" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="sh2" value="tn-mb.bin —— 4K mailbox&#xa;/dev/shm · @0x78000000&#xa;8 核 × 64B 槽&#xa;magic/seq/start/done&#xa;（v0 轮询握手）" style="shape=cylinder3;whiteSpace=wrap;html=1;boundedLbl=1;backgroundOutline=1;size=12;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="1030" y="380" width="230" height="150" as="geometry" />
+        </mxCell>
+        <mxCell id="sc0" value="卡侧 QEMU · scalar 实例 —— scalar-fg.sh（先起，不带 -device/-object）&#xa;-M tn-card · -smp 8 · fw @0x80400000 · 纯执行器" style="rounded=1;whiteSpace=wrap;html=1;verticalAlign=top;fontSize=13;fontStyle=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="620" y="560" width="640" height="250" as="geometry" />
+        </mxCell>
+        <mxCell id="sc1" value="scalar fw 执行固件&#xa;（单镜像 + 每核 per-CPU 数据）&#xa;8×C906 轮询本核 mailbox 槽&#xa;start=1 → fence.i → 跳 entry_pc&#xa;status/done 回执" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="sc0">
+          <mxGeometry x="30" y="55" width="300" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="sc2" value="算子 DSO 真执行&#xa;模块区 0x82000000（host 加载期&#xa;已完成 GOT/PLT 重定位）&#xa;fw 函数经 PLT 真调用&#xa;统一入参 {addr, len}" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="sc0">
+          <mxGeometry x="350" y="55" width="270" height="105" as="geometry" />
+        </mxCell>
+        <mxCell id="note1" value="TCG 纪律：fence.i 在 TCG 不刷 TB ——&#xa;每进程只加载一次模块；换 DSO 重跑必须&#xa;连 scalar 实例一起重启（rig 全量重启序列）" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=18;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="40" y="480" width="360" height="95" as="geometry" />
+        </mxCell>
+        <mxCell id="note2" value="宿主：三个 QEMU 都跑在 qemu-run 容器；&#xa;x86 侧 KVM 经容器设备直通（/dev/kvm）" style="shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;size=18;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="40" y="600" width="360" height="75" as="geometry" />
+        </mxCell>
+        <mxCell id="ev1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="vm1" target="vm2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ev2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="vm2" target="vm3">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ev3" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="vm3" target="vm4">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ea1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ap1" target="ap2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="ea2" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=1;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="ap3" target="ap2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="esc1" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="sc1" target="sc2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="esock" value="vfio-user 协议&#xa;UNIX socket" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeWidth=2;strokeColor=#d79b00;fontSize=12;fontStyle=1;exitX=1;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="vm4" target="ap1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="edata" value="数据面：BAR1 HtoD/DtoH&#xa;（经 socket → EP 模型 → DRAM）" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;strokeWidth=2;strokeColor=#6c8ebf;dashed=1;fontSize=12;exitX=1;exitY=0.85;exitDx=0;exitDy=0;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" source="vm4" target="sh1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eapdram" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.33;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ap0" target="sh1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="eapmb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.78;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="ap0" target="sh2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="escdram" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.33;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="sc0" target="sh1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="escmb" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;endArrow=block;endSize=8;exitX=0.78;exitY=0;exitDx=0;exitDy=0;entryX=0.5;entryY=1;entryDx=0;entryDy=0;" edge="1" parent="1" source="sc0" target="sh2">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

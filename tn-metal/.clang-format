@@ -1,0 +1,7 @@
+# tn-metal code style
+# Baseline: LLVM, adapted to existing codebase (4-space indent, 100 columns).
+# Run: clang-format -i <file>   (or rely on the pre-commit hook)
+---
+BasedOnStyle: LLVM
+IndentWidth: 4
+ColumnLimit: 100

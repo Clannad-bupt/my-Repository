@@ -1,0 +1,73 @@
+# LPU 软件执行流程图解
+
+> 四个视角串起一条链:host 运行时(UMD)提交 → AP 调度固件派发 → scalar 执行固件跑算子 → QEMU 内 xthead 扩展指令译码执行。图源 `LPU-FLOW.drawio`(四页,draw.io 可直接编辑);本文由 `flow_doc_build.py` 注入导出的 SVG 生成。
+
+## 0. 全链路总览
+
+验证环境是一个 x86 虚拟机加两个 QEMU 进程:
+
+- **x86 VM**:跑生产代码/示例程序、`liblpu_rt.so`(UMD)与 `lpu.ko`(KMD)。
+- **tn-card 卡侧 QEMU ×2**:`ap` 实例(`-smp 4`,fw-load-addr `0x80000000`)与 `scalar` 实例(`-smp 8`,fw-load-addr `0x80400000`)。DRAM 用共享文件 `/dev/shm/tn-dram.bin`(memory-backend-file,share=on),mailbox 映射在 `0x78000000`(`/dev/shm/tn-mb.bin`,4K,64B/核)。三者经 vfio-user over UNIX socket 相连。
+
+一次 kernel 的完整时间线(load → submit → dispatch → execute → reap):
+
+1. **load**:`lpuRtSetFirmwareElf` 解析 fw ELF 的 `.symtab`,缓存 `lpu_fw_` 前缀导出;`lpuRtModuleLoad` 由 host 扮演 ld.so,把算子 DSO 拷段、完成全部重定位后写进设备 DRAM。
+2. **submit**:`lpuRtLaunchKernelAsync` → `rt_launch_build` 在 DRAM 池里组 launch block、填 KERNEL 描述符 → `rt_ring_submit` 写环槽、WC flush、敲门铃 `Q_WP[s]`。
+3. **dispatch**:AP 固件 core0 `sched_ring_poll` 发现门铃 → `sched_dispatch_kernel` 解析 task/cluster/block → `core_dispatch` 填 mailbox、置 `start=1`。
+4. **execute**:scalar 固件轮询到 `start==1` → `fence.i` → 跳 `entry_pc`,算子在 LPU core 上执行。
+5. **reap**:AP `core_reap` 收 `done`、写 CQ KERNEL_DONE;host `rt_cq_poll` 消费完成项、释放 launch block。
+
+各组件的完整职责与假定见 `lpu-sw-stack.md`,落地状态与已知坑见 `lpu-sw-impl.md`（都在本目录）,调度器需求见验证环境仓库的 `LPU-SCHED-SPEC.md`。
+
+## 1. Host 运行时(UMD:liblpu_rt.so)
+
+**初始化**。`lpuRtInit`(`rt_init.c:162`)按环境变量/flags/`/dev/lpu0` 探测选后端(sim 或 device)。`hw_bring_up` 先校验 IDENT 魔数,清 CTRL,host_alloc 三块影子(CQ/RP/EVT),编程各寄存器基址与深度,初始化 DRAM 池,最后置 `CTRL=ENABLE|0xff<<8` 并 flush。
+
+**算子加载(host 扮演 ld.so)**。fw 固件不含 ELF loader,加载全在 host 侧完成:`lpuRtSetFirmwareElf` 解析 fw ELF `.symtab` 得到 `lpu_fw_` 导出表;`lpuRtModuleLoad` 校验算子 DSO(freestanding:有 `DT_NEEDED` 即拒绝,只允许 R_RISCV_RELATIVE 与 R_RISCV_64/JUMP_SLOT 重定位),拷段清零后把所有 GOT/PLT 项定值到 fw 导出表,写进设备 DRAM。`lpuRtModuleGetFunction("op_entry")` 返回入口偏移。
+
+**提交与完成(无后台线程)**。所有会观察进度的 API 入口都调 `rt_cq_poll`,轮询是被动式的。提交侧:`lpuRtCreateStream` host_alloc 环并编程 `Q_CTX[s]`;数据经 `lpuRtMemcpyHtoD` 走 BAR1 窗口,设备窗口一律用 `rt_dmemcpy` 等 8 字节窄访问(KVM 下 AVX 宽访问 MMIO 窗口会 SIGILL);`rt_launch_build` 在 DRAM 池组 `[task 32B | cluster×gn 256B | param ≤128B]`,填 `entry_pc` 与 `param_ptr`,KERNEL 描述符入 FIFO;`rt_ring_submit` 环满时轮询影子刷新(5s 超时),向 256B 槽位前 32B 写描述符,WC flush 后以绝对索引敲门铃。完成侧:`rt_cq_poll` 读本地 CQ 的 `CQ_WP`,消费 KERNEL_DONE(弹 FIFO、池释放、inflight--),回写 `CQ_CP`;`lpuRtStreamSync` 循环到 `inflight==0` 且 `rp_cached==wp`。
+
+<!--DIAGRAM:1-host-runtime-UMD-->
+
+## 2. AP 调度固件(4 核 C906,core0 调度)
+
+**启动**。全核先设 gp/sp/mtvec;core0 独家清 `.bss` 后进 `main(0)`,core1..3 进唤醒轮询(zsbl 模型:`ap_wake` 填 16B 槽,worker 的 start.S 汇编轮询 `fn != NULL` 后 `jalr`)。`main` 完成 uart init 与 `sched_ep_init`(寄存器块/host 窗口基址)。
+
+**命令环轮询**。core0 主循环 `sched_ring_poll`(`sched_ring.c:98`)轮询 16 个流的门铃 `Q_WP[s] > rp[s]`,有新命令就 `ring_fetch` 经 EP outbound 窗口(`0x92000000`)拉 32B 描述符,`desc_handle` 按类型分派:KERNEL 进调度;EVENT 置/清事件位;BARRIER 检查 mask,不就绪则停在流头保序;COPY/CPU_OP v1 未实现,写 CQ ERR。
+
+**派发与收割**。`sched_dispatch_kernel`(`sched_dispatch.c:108`)拉 task → cluster,先校验全部 block 的 gang N(出错路径不占用忙核),EVAL `wait_mask` 未就绪则有限自旋(`2×10^7`,超时 CQ ERR status=5)。随后逐 block×role:`core_acquire` 从忙掩码找空闲核(全忙先收割),`core_dispatch` 填 mailbox(`0x78000000+cid×64`)、`fence rw,rw`、置 `start=1` —— 从这一刻起执行权交给 scalar。收割侧 `core_reap` 查忙核 `done==1`,记 `kern_status`,清 start/done(把 scalar 核放出等待循环),释放核、`cluster_left--`。全部收割后做信号级联(cluster → task 的 signal_mask),`sched_cq_write` 把 KERNEL_DONE 以 16B posted write 经 EP 窗口写进 host CQ 并推进 `CQ_WP`(满或未配置则丢弃不推进),最后 `rp_publish` 回写 RP 影子与 `Q_CTX.RP`。
+
+<!--DIAGRAM:2-ap-sched-fw-->
+
+## 3. scalar 执行固件(8 核单镜像,per-CPU 状态)
+
+**启动(percpu 初始化)**。ROM 跳板(`0x04400000`)用 `auipc` + `csrr a0,mhartid` 跳到 DRAM 固件。start.S 逐核计算自己的槽基 `0x80004000+id×32K`,先设 gp(必须早于清 `.bss` —— 曾因 gp 晚设,清零循环把整个 64MiB DRAM 清穿),再拷 `.tdata` 模板、设 `tp=槽基`、`sp=本核栈`、`mtvec`。`main(id)` 调 `fw_core_id_init` 把核号写进本核 TLS 槽;core0 独家初始化 UART,核 1..7 全程不碰 UART。
+
+**执行循环(mailbox v0 轮询握手)**。`dispatch_loop`(`main.c:40`)轮询本核槽 `start==1`,校验 `magic=="LPUM"` 与 `core_id`(不符记 st=2/3,照常回执、不阻塞调度器),然后 `fw_core_exec`(`op_exec.c:14`):`fence.i` 保证 host 刚写进 DRAM 的算子代码取指可见,间接跳转 `entry_pc(param_ptr)`。fw 不含 ELF loader,算子 DSO 直接执行:本核 16K 栈、fw 函数经 PLT+GOT(加载期已定值)、`tp` 指向本核槽。算子返回 uint32 写入 `status`,`done=1` 写回 mailbox(共享文件,AP 实例立即可见),等 `start==0` 后回轮询。
+
+<!--DIAGRAM:3-scalar-exec-fw-->
+
+## 4. QEMU 内 xthead 扩展指令译码
+
+xthead 指令从启用到执行分三个时期:
+
+**准备期(每 CPU 一次)**。`-M th-c906` 或 `-M tn-card` 选定 thead-c906 CPU 型号(`th_c906.c:39`)。其定义表项(`cpu.c:3574`)置全部 `ext_xthead*` cfg 为真并挂 `custom_csrs=th_csr_list`、mvendorid=T-Head。CPU realize 时 `finalize_dynamic_decoder`(`tcg-cpu.c:1253`)按 `has_xthead_p(cfg)` 把 `decode_xthead` 装进 `cpu->decoders`;`riscv_register_custom_csrs`(`tcg-cpu.c:1690`)以 mvendorid 门控逐条注册 T-Head CSR。
+
+**翻译期(每 TB 一次)**。`riscv_tr_translate_insn` → `decode_opc`(`translate.c:1259`)4 字节取码,先判 2B 压缩指令(RVC),再按 decoders 数组依序尝试:insn32(标准 RV)→ xmips → xthead。`decode_xthead` 是 decodetree 从 `xthead.decode` 生成的模式匹配器(opcode=0001011 一族)。
+
+**执行期**。命中的模式走 `trans_th_*`(`trans_xthead.c.inc`),`REQUIRE_XTHEAD*(ctx)` 用 cfg 再门控一次,然后 `tcg_gen_*` 生成 TCG 微操作;TB 缓存后由 TCG 后端 JIT 成 host 机器码,后续执行零翻译开销。需要 helper 的特殊指令走 C helper(如 `th.sfence.vmas` → `tlb_flush_all`);全不匹配则 `gen_exception_illegal`,guest 收到非法指令异常。CSR 指令是另一套门:`csrr`/`csrw` → `csr_ops` 查表 → `th_csr_list`(如 `th.mxstatus @0x7c0`)。
+
+当前 fw 与算子都编 `-march=rv64gc`,尚不产生 xthead 指令;但 CPU 模型已注册全部扩展与译码器 —— 算子里加内联汇编即走此路径。
+
+<!--DIAGRAM:4-qemu-xthead-decode-->
+
+## 附:再生成本文档
+
+```bash
+cd docs/rt
+python3 ~/.claude/skills/drawio-skill/scripts/validate.py LPU-FLOW.drawio --score
+docker run --rm -v "$PWD":/data rlespinasse/drawio-export -f svg
+python3 flow_doc_build.py
+```
+
+`LPU-FLOW.md.in` 是文字模板;`flow_doc_build.py` 把 drawio 导出的各页 SVG 注入 `<!--DIAGRAM:…-->` 标记处,生成 `LPU-FLOW.md`,再调 md2html 产出本 HTML。图源 `LPU-FLOW.drawio` 用 draw.io 打开即可直接编辑。

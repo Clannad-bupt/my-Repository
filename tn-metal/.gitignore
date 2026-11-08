@@ -1,0 +1,16 @@
+/build/
+/.cache/
+.DS_Store
+CLAUDE.md
+/.remember
+/tmp
+
+# LPU verify stack (ported from the QEMU verification tree)
+src/ap/build*/
+src/scalar/build*/
+src/scalar/sample_op/*.so
+src/scalar/sample_op/*.elf
+src/scalar/sample_op/*.map
+# driver kbuild artifacts are covered by src/driver/.gitignore
+prebuilt/*
+!prebuilt/README.md

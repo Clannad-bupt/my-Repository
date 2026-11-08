@@ -1,0 +1,46 @@
+# tn-metal pre-commit hooks
+# Install:  pip install pre-commit
+#           pip install clang-format==19.1.0   # same v19.1.0 binary as the
+#                                             # upstream mirror hook
+#           pre-commit install --hook-type pre-commit --hook-type commit-msg
+# Run all:  pre-commit run --all-files
+#
+# All hooks are language: system on purpose. python hooks would need a hook
+# environment created via virtualenv, and this server's python3.8 carries an
+# apt python3-virtualenv 20.0.17 whose legacy plugin entry points crash any
+# newer virtualenv ("no attribute 'CPython2macOsFramework'"). system hooks
+# never create hook environments (and skip the mirror download entirely).
+repos:
+  # [1] C/C++ auto formatting (rewrites staged files; re-add and retry)
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format (pip clang-format==19.1.0)
+        language: system
+        entry: clang-format -i
+        types_or: [c, c++]
+
+  # [2] No CJK characters in code/config (comments and string literals
+  #     alike); Markdown docs are exempt (not matched by `files`).
+  #     Byte range 0xE4-0xE9 = UTF-8 lead bytes of U+4000..U+9FFF (CJK
+  #     ideographs and punctuation); .scripts/check_no_cjk.py keeps the
+  #     pygrep semantics (fail + print the matching lines).
+  - repo: local
+    hooks:
+      - id: no-cjk-in-code
+        name: no CJK chars in code/comments
+        language: system
+        entry: python3 .scripts/check_no_cjk.py
+        files: '\.(c|h|cpp|hpp|cc|cxx)$|^CMakeLists\.txt$|^\.clang-format$'
+
+  # [3] All commit-message rules in one script (error messages point to
+  #     CONTRIBUTING.md): Conventional Commits header with type/scope
+  #     whitelist, fixup!/merge rejection, blank line after header,
+  #     '- ' bullet body, every line <= 72 chars
+  - repo: local
+    hooks:
+      - id: commit-msg
+        name: commit message checks (see CONTRIBUTING.md)
+        language: system
+        entry: python3 .scripts/check_commit_msg.py
+        stages: [commit-msg]
